@@ -97,8 +97,10 @@ const penaltyMs = (t, until = Infinity) => t.slips.reduce((a, s) => (s.at <= unt
 const netAt = (t, time) => time - t.startAt - penaltyMs(t, time);
 const sortedSlips = t => [...t.slips].sort((a, b) => a.at - b.at);
 // Slips that are ready for a "how did it actually go?" reflection.
+const upcomingReflection = (t, now = Date.now()) =>
+  sortedSlips(t).reverse().find(s => s.at > now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
 const pendingReflections = (t, now = Date.now()) =>
-  sortedSlips(t).filter(s => !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
+  sortedSlips(t).filter(s => s.at <= now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
 
 function milestoneInfo(net) {
   let i = -1;
@@ -284,11 +286,42 @@ function addSlip(t, at = Date.now(), extra = {}) {
   const slip = { id: uid(), at, hours: t.pen.med, level: 'med', note: '', expect: '', actual: '', worth: null, ...extra };
   t.slips.push(slip);
   save(); render();
-  toast(`−${hrs(slip.hours)} penalty logged`, [
-    { label: 'Add details', fn: () => openSlipSheet(t, slip, 'note') },
-    { label: 'Undo', fn: () => { t.slips = t.slips.filter(s => s !== slip); save(); render(); } },
-  ], 7000);
+  quickCheckin(t, slip);
   return slip;
+}
+
+// Immediately after a slip: 20-second check-in (feeling + a line on why).
+// The full reflection unlocks REFLECT_DELAY later, once the moment has passed.
+const REFLECT_DELAY = 30 * MIN;
+function quickCheckin(t, slip) {
+  const felt = { feltBefore: [...(slip.feltBefore || [])] };
+  openSheet(`
+    <h3>Quick check-in</h3>
+    <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.</p>
+    <form id="qc">
+      <div class="field"><span>😶 What are you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
+      <label class="field"><span>Briefly, why?</span><input name="why" maxlength="200" placeholder="e.g. stressed about work, bored after dinner" value="${esc(slip.note)}" autocomplete="off"></label>
+      <div class="stack">
+        <button class="btn block" type="submit">Save</button>
+        <button class="btn secondary block" type="button" id="qcSkip">Skip for now</button>
+      </div>
+      <p class="qc-foot">Your full reflection will be ready in 30 minutes, once the moment has passed. <button type="button" class="link-btn" id="qcUndo">Undo this slip</button></p>
+    </form>`, sheet => {
+    bindEmoField($('#qcFelt', sheet), felt, 'feltBefore', 'What are you feeling?', 'Name the feeling');
+    const f = $('#qc', sheet);
+    f.onsubmit = e => {
+      e.preventDefault();
+      Object.assign(slip, { feltBefore: felt.feltBefore, note: f.elements.why.value.trim() });
+      save(); closeSheet(true); render();
+      toast('Saved. Reflection in 30 min.');
+    };
+    $('#qcSkip', sheet).onclick = () => closeSheet(true);
+    $('#qcUndo', sheet).onclick = () => {
+      const cur = getTimer(t.id); if (!cur) return;
+      cur.slips = cur.slips.filter(s => s.id !== slip.id); save(); closeSheet(true); render();
+      toast('Slip removed');
+    };
+  });
 }
 
 /* ───────────── views ───────────── */
@@ -388,8 +421,12 @@ function renderDetail(t) {
     </section>
 
     ${(() => {
-      const pend = pendingReflections(t, now); if (!pend.length) return '';
-      const s = pend[0], fresh = now - s.at < 30 * MIN;
+      const pend = pendingReflections(t, now);
+      if (!pend.length) {
+        const up = upcomingReflection(t, now);
+        return up ? `<div class="reflect-soon">⏳ Full reflection ready in <span data-live="reflectSoon" data-id="${t.id}"></span> — give the moment time to pass.</div>` : '';
+      }
+      const s = pend[0], fresh = false;
       return `<section class="card reflect-card">
         <div class="section-title">📝 ${fresh ? 'Reflect on this slip' : 'How did it actually go?'}${pend.length > 1 ? ` <span class="chip">${pend.length} waiting</span>` : ''}</div>
         <div class="sub">Slip on ${fmtDateTime(s.at)}${fresh ? ' — when the moment has passed, come back and walk through what actually happened. It takes about two minutes.' : ''}</div>
@@ -503,6 +540,12 @@ function tick() {
         el.textContent = mi.next ? `Next: ${mi.next.e} ${mi.next.label} in ${fmtShort(mi.next.ms - net)}` : 'Every milestone reached 👑';
         break;
       }
+      case 'reflectSoon': {
+        const up = upcomingReflection(t, now);
+        if (!up) { render(); return; }
+        el.textContent = Math.max(1, Math.ceil((up.at + 30 * MIN - now) / MIN)) + ' min';
+        break;
+      }
       case 'clean': {
         const last = t.slips.length ? Math.max(...t.slips.map(s => s.at)) : t.startAt;
         el.textContent = fmtShort(now - last);
@@ -510,6 +553,10 @@ function tick() {
       }
     }
   });
+  // Re-render when a slip's reflection becomes due, so its prompt appears on its own.
+  const due = state.timers.reduce((a, t) => a + pendingReflections(t, now).length, 0);
+  if (tick.due != null && due > tick.due && !$('.backdrop') && !$('#wave') && app.dataset.view !== 'insights') render();
+  tick.due = due;
   checkCelebrations(now);
   tickWave(now);
 }
@@ -955,6 +1002,7 @@ function openSlipSheet(t, slip, focus) {
       <section class="rstep">
         <div class="rstep-head"><span class="rnum">1</span><div><b>Name the decision</b>
           <p>Say it plainly, without judgment: it was a choice. Owning it as a choice is exactly what gives you the power to make a different one.</p></div></div>
+        ${d.note ? `<div class="expect"><span>In the moment you said:</span> ${esc(d.note)}</div>` : ''}
         <label class="field"><span>The decision</span><textarea name="decision" maxlength="1000" placeholder="I chose to use again because…">${esc(d.decision || '')}</textarea></label>
         <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
       </section>
