@@ -61,9 +61,10 @@ function normalizeTimer(t) {
     // Penalty levels: hours + what counts as that level (written ahead of time).
     pen: (() => {
       const med = t.pen?.med ?? (t.penaltyHours != null ? +t.penaltyHours : 4);
-      return { low: t.pen?.low ?? Math.min(3, med), med, high: t.pen?.high ?? Math.max(6, med) };
+      const low = t.pen?.low ?? Math.min(3, med);
+      return { tiny: t.pen?.tiny ?? Math.min(1, low), low, med, high: t.pen?.high ?? Math.max(6, med) };
     })(),
-    penDesc: { low: '', med: '', high: '', ...(t.penDesc || {}) },
+    penDesc: { tiny: '', low: '', med: '', high: '', ...(t.penDesc || {}) },
     waveMin: +t.waveMin || 10,
     message: t.message != null ? String(t.message) : DEFAULT_MSG,
     alts: Array.isArray(t.alts) ? t.alts.map(String) : DEFAULT_ALTS.slice(),
@@ -224,9 +225,9 @@ function closeSheet(animate) {
 }
 
 /* ───────────── actions ───────────── */
-const LEVELS = [['low', 'A little', '🟡'], ['med', 'Medium', '🟠'], ['high', 'A lot', '🔴']];
+const LEVELS = [['tiny', 'A tiny bit', '🟢'], ['low', 'A little', '🟡'], ['med', 'Medium', '🟠'], ['high', 'A lot', '🔴']];
 const levelLabel = l => (LEVELS.find(x => x[0] === l) || [])[1] || '';
-const penRange = t => `−${hrs(t.pen.low)}–${hrs(t.pen.high)}`;
+const penRange = t => `−${hrs(t.pen.tiny)}–${hrs(t.pen.high)}`;
 
 // Ask how big the slip was, then log it with that level's penalty.
 function chooseSlip(t, extra = {}, onLogged) {
@@ -816,7 +817,7 @@ addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout((
 /* ───────────── sheets ───────────── */
 function openTimerSheet(t) {
   const isNew = !t;
-  const d = t || { name: '', startAt: Date.now(), pen: { low: 3, med: 4, high: 6 }, penDesc: { low: '', med: '', high: '' }, waveMin: 10, message: DEFAULT_MSG, alts: DEFAULT_ALTS };
+  const d = t || { name: '', startAt: Date.now(), pen: { tiny: 1, low: 3, med: 4, high: 6 }, penDesc: { tiny: '', low: '', med: '', high: '' }, waveMin: 10, message: DEFAULT_MSG, alts: DEFAULT_ALTS };
   openSheet(`
     <h3>${isNew ? 'New timer' : 'Edit timer'}</h3>
     <form id="tf">
@@ -829,7 +830,7 @@ function openTimerSheet(t) {
         </div>
         <div class="hint">Changing these only affects future slips.</div></div>
       <div class="field"><span>What counts as each level? <em class="muted">(optional, but decide now while you're clear-headed)</em></span>
-        ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
+        ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ tiny: 'just to ease withdrawal', low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
       </div>
       <label class="field"><span>🌊 Ride-the-wave length (minutes)</span><input name="wave" type="number" inputmode="numeric" min="1" max="120" required value="${d.waveMin}">
         <div class="quick" data-for="wave">${[5, 10, 15, 20].map(m => `<button type="button" data-v="${m}" class="${+d.waveMin === m ? 'on' : ''}">${m} min</button>`).join('')}</div></label>
