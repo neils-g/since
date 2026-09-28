@@ -1106,6 +1106,7 @@ function chime() {
 }
 
 function startWave(t) {
+  actEditing = false;
   state.wave = { timerId: t.id, phase: 'setup', minutes: t.waveMin, before: null, after: null, done: [] };
   save(); renderWave();
 }
@@ -1126,6 +1127,7 @@ function msgCard(text, title) {
 
 /* ───────────── activity planner (inside Ride the Wave) ───────────── */
 // w.plan = activities chosen for this wave; w.done = ones completed; t.favAlts = starred.
+let actEditing = false; // UI-only: "Edit" mode for deleting ideas
 function activitiesHTML(t, w) {
   const plan = w.plan || [], favs = t.favAlts.filter(a => t.alts.includes(a));
   const others = t.alts.filter(a => !favs.includes(a));
@@ -1133,8 +1135,10 @@ function activitiesHTML(t, w) {
     <li class="act-row ${plan.includes(a) ? 'in-plan' : ''}" data-act="${esc(a)}">
       <span class="drag-h" data-drag aria-label="Drag">⋮⋮</span>
       <span class="act-txt">${esc(a)}</span>
-      <button type="button" class="act-star ${favs.includes(a) ? 'on' : ''}" data-star aria-label="Favorite">${favs.includes(a) ? '★' : '☆'}</button>
-      <button type="button" class="act-add" data-add aria-label="Add to plan">${plan.includes(a) ? '✓' : '+'}</button>
+      ${actEditing
+        ? `<button type="button" class="act-del" data-del aria-label="Delete idea">🗑</button>`
+        : `<button type="button" class="act-star ${favs.includes(a) ? 'on' : ''}" data-star aria-label="Favorite">${favs.includes(a) ? '★' : '☆'}</button>
+      <button type="button" class="act-add" data-add aria-label="Add to plan">${plan.includes(a) ? '✓' : '+'}</button>`}
     </li>`;
   return `
     <div class="drop-zone plan-zone" data-zone="plan">
@@ -1149,7 +1153,8 @@ function activitiesHTML(t, w) {
       <div class="dz-title">⭐ Favorites</div>
       ${favs.length ? `<ul class="act-list">${favs.map(row).join('')}</ul>` : '<div class="dz-empty">Drag ideas here (or tap ☆) to keep them on top</div>'}
     </div>
-    <div class="dz-title all-title">All ideas</div>
+    <div class="dz-title all-title">All ideas <button type="button" class="link-btn" data-edit-acts>${actEditing ? 'Done' : 'Edit'}</button></div>
+    ${actEditing ? '<div class="dz-empty">Tap 🗑 to delete ideas that don\'t fit anymore.</div>' : ''}
     <ul class="act-list">${others.map(row).join('')}</ul>
     <form class="act-new" data-new>
       <input name="idea" maxlength="80" placeholder="Add a fresh idea…" autocomplete="off">
@@ -1167,6 +1172,14 @@ function mountActivities(host, t, w) {
     const item = e.target.closest('[data-act]'); const a = item?.dataset.act;
     if (e.target.closest('[data-star]')) { t.favAlts = t.favAlts.includes(a) ? t.favAlts.filter(x => x !== a) : [...t.favAlts, a]; commit(); }
     else if (e.target.closest('[data-add]')) { (w.plan || []).includes(a) ? (w.plan = w.plan.filter(x => x !== a)) : addToPlan(a); commit(); }
+    else if (e.target.closest('[data-edit-acts]')) { actEditing = !actEditing; draw(); }
+    else if (e.target.closest('[data-del]')) {
+      const snap = { alts: [...t.alts], favAlts: [...t.favAlts], plan: [...(w.plan || [])], done: [...w.done] };
+      t.alts = t.alts.filter(x => x !== a); t.favAlts = t.favAlts.filter(x => x !== a);
+      w.plan = (w.plan || []).filter(x => x !== a); w.done = w.done.filter(x => x !== a);
+      commit();
+      toast(`Deleted “${a.length > 24 ? a.slice(0, 24) + '…' : a}”`, [{ label: 'Undo', fn: () => { Object.assign(t, { alts: snap.alts, favAlts: snap.favAlts }); Object.assign(w, { plan: snap.plan, done: snap.done }); commit(); } }]);
+    }
     else if (e.target.closest('[data-unplan]')) { w.plan = w.plan.filter(x => x !== a); w.done = w.done.filter(x => x !== a); commit(); }
   };
   host.onchange = e => {
