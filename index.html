@@ -443,6 +443,37 @@ button.cal-cell:active { transform: scale(.94); }
 .field em { font-style: normal; font-weight: 400; }
 .lv-tag { display: block; font-size: 10px; font-weight: 600; color: var(--muted); text-align: right; }
 
+/* activity planner */
+.drop-zone { border: 2px dashed var(--line); border-radius: 16px; padding: 10px 12px; margin-bottom: 12px; transition: border-color .15s, background .15s; }
+.drop-zone.over { border-color: var(--wave); background: var(--wave-soft); }
+.plan-zone { border-color: color-mix(in oklab, var(--wave) 45%, var(--line)); }
+.dz-title { font-size: 13px; font-weight: 700; color: var(--ink2); margin-bottom: 6px; }
+.all-title { margin: 4px 0 2px; }
+.dz-empty { font-size: 13px; color: var(--muted); padding: 8px 0 4px; }
+.plan-list, .act-list { list-style: none; margin: 0; padding: 0; }
+.plan-item { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--line); }
+.plan-item:first-child { border-top: 0; }
+.plan-item label { flex: 1; display: flex; gap: 12px; align-items: center; padding: 10px 0; cursor: pointer; font-weight: 600; }
+.plan-item input { width: 22px; height: 22px; accent-color: var(--wave); flex: none; }
+.plan-item.done span { text-decoration: line-through; color: var(--muted); font-weight: 400; }
+.plan-rm { color: var(--muted); padding: 8px; font-size: 14px; }
+.act-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-top: 1px solid var(--line); }
+.act-list .act-row:first-child { border-top: 0; }
+.drag-h { touch-action: none; cursor: grab; color: var(--muted); font-size: 16px; letter-spacing: -3px; padding: 10px 10px 10px 2px; user-select: none; -webkit-user-select: none; }
+.act-txt { flex: 1; min-width: 0; font-size: 15px; padding: 8px 0; }
+.act-row.in-plan .act-txt { color: var(--muted); }
+.act-row.dragging { opacity: .35; }
+.act-star, .act-add { width: 36px; height: 36px; border-radius: 10px; font-size: 18px; flex: none; display: grid; place-items: center; }
+.act-star { color: var(--muted); }
+.act-star.on { color: var(--gold); }
+.act-add { background: var(--wave-soft); color: var(--wave); font-weight: 700; }
+.act-row.in-plan .act-add { background: var(--wave); color: #fff; }
+.act-new { display: flex; gap: 8px; margin-top: 12px; }
+.act-new input { flex: 1; min-width: 0; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 16px; }
+.act-new .btn { padding: 11px 16px; }
+.drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; background: var(--surface); color: var(--ink); border: 2px solid var(--wave); border-radius: 12px; padding: 10px 14px; font-size: 15px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
+
 /* guided reflection */
 .rstep { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .rstep-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }

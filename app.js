@@ -68,6 +68,7 @@ function normalizeTimer(t) {
     waveMin: +t.waveMin || 10,
     message: t.message != null ? String(t.message) : DEFAULT_MSG,
     alts: Array.isArray(t.alts) ? t.alts.map(String) : DEFAULT_ALTS.slice(),
+    favAlts: Array.isArray(t.favAlts) ? t.favAlts.map(String) : [],
     slips: Array.isArray(t.slips) ? t.slips.map(s => ({ ...s, id: s.id || uid(), at: +s.at, hours: +s.hours, note: String(s.note || ''), expect: String(s.expect || ''), actual: String(s.actual || '') })) : [],
     waves: Array.isArray(t.waves) ? t.waves : [],
     celebrated: t.celebrated != null ? t.celebrated : -1,
@@ -897,6 +898,7 @@ function openTimerSheet(t) {
         waveMin: Math.max(1, Math.round(+f.elements.wave.value || 10)),
         message: f.elements.msg.value.trim(),
         alts: f.elements.alts.value.split('\n').map(s => s.trim()).filter(Boolean),
+        favAlts: (t?.favAlts || []).filter(a => f.elements.alts.value.split('\n').map(s => s.trim()).includes(a)),
       };
       if (isNew) {
         const nt = normalizeTimer(vals);
@@ -1122,6 +1124,105 @@ function msgCard(text, title) {
     ${long ? `<button type="button" class="link-btn msg-toggle" onclick="const c=this.closest('.msg-card');c.classList.toggle('collapsed');this.textContent=c.classList.contains('collapsed')?'Read the whole message':'Show less'">Read the whole message</button>` : ''}</div>`;
 }
 
+/* ───────────── activity planner (inside Ride the Wave) ───────────── */
+// w.plan = activities chosen for this wave; w.done = ones completed; t.favAlts = starred.
+function activitiesHTML(t, w) {
+  const plan = w.plan || [], favs = t.favAlts.filter(a => t.alts.includes(a));
+  const others = t.alts.filter(a => !favs.includes(a));
+  const row = a => `
+    <li class="act-row ${plan.includes(a) ? 'in-plan' : ''}" data-act="${esc(a)}">
+      <span class="drag-h" data-drag aria-label="Drag">⋮⋮</span>
+      <span class="act-txt">${esc(a)}</span>
+      <button type="button" class="act-star ${favs.includes(a) ? 'on' : ''}" data-star aria-label="Favorite">${favs.includes(a) ? '★' : '☆'}</button>
+      <button type="button" class="act-add" data-add aria-label="Add to plan">${plan.includes(a) ? '✓' : '+'}</button>
+    </li>`;
+  return `
+    <div class="drop-zone plan-zone" data-zone="plan">
+      <div class="dz-title">🎯 This wave, I'll focus on</div>
+      ${plan.length ? `<ul class="plan-list">${plan.map(a => `
+        <li class="plan-item ${w.done.includes(a) ? 'done' : ''}" data-act="${esc(a)}">
+          <label><input type="checkbox" data-done ${w.done.includes(a) ? 'checked' : ''}><span>${esc(a)}</span></label>
+          <button type="button" class="plan-rm" data-unplan aria-label="Remove">✕</button>
+        </li>`).join('')}</ul>` : '<div class="dz-empty">Drag an idea here, or tap + on one below</div>'}
+    </div>
+    <div class="drop-zone fav-zone" data-zone="fav">
+      <div class="dz-title">⭐ Favorites</div>
+      ${favs.length ? `<ul class="act-list">${favs.map(row).join('')}</ul>` : '<div class="dz-empty">Drag ideas here (or tap ☆) to keep them on top</div>'}
+    </div>
+    <div class="dz-title all-title">All ideas</div>
+    <ul class="act-list">${others.map(row).join('')}</ul>
+    <form class="act-new" data-new>
+      <input name="idea" maxlength="80" placeholder="Add a fresh idea…" autocomplete="off">
+      <button class="btn" type="submit">Add</button>
+    </form>`;
+}
+
+function mountActivities(host, t, w) {
+  const draw = () => { host.innerHTML = activitiesHTML(t, w); };
+  const commit = () => { save(); draw(); };
+  const addToPlan = a => { w.plan = [...new Set([...(w.plan || []), a])]; };
+  draw();
+
+  host.onclick = e => {
+    const item = e.target.closest('[data-act]'); const a = item?.dataset.act;
+    if (e.target.closest('[data-star]')) { t.favAlts = t.favAlts.includes(a) ? t.favAlts.filter(x => x !== a) : [...t.favAlts, a]; commit(); }
+    else if (e.target.closest('[data-add]')) { (w.plan || []).includes(a) ? (w.plan = w.plan.filter(x => x !== a)) : addToPlan(a); commit(); }
+    else if (e.target.closest('[data-unplan]')) { w.plan = w.plan.filter(x => x !== a); w.done = w.done.filter(x => x !== a); commit(); }
+  };
+  host.onchange = e => {
+    if (!e.target.matches('[data-done]')) return;
+    const a = e.target.closest('[data-act]').dataset.act;
+    w.done = e.target.checked ? [...new Set([...w.done, a])] : w.done.filter(x => x !== a);
+    save(); e.target.closest('.plan-item').classList.toggle('done', e.target.checked);
+  };
+  host.onsubmit = e => {
+    e.preventDefault();
+    const input = e.target.elements.idea, a = input.value.trim();
+    if (!a) return;
+    if (!t.alts.includes(a)) t.alts.push(a);
+    addToPlan(a); commit();
+    toast('Added to your plan and saved to your ideas');
+  };
+
+  // Touch-friendly drag from the ⋮⋮ handle into the plan or favorites zones.
+  host.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('[data-drag]'); if (!handle) return;
+    e.preventDefault();
+    const a = handle.closest('[data-act]').dataset.act;
+    const scroller = host.closest('.wave-screen');
+    const ghost = document.createElement('div');
+    ghost.className = 'drag-ghost'; ghost.textContent = a;
+    document.body.appendChild(ghost);
+    handle.closest('[data-act]').classList.add('dragging');
+    let over = null, lastY = e.clientY, raf;
+    const zoneAt = (x, y) => $$('[data-zone]', host).find(z => { const r = z.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
+    const place = (x, y) => { ghost.style.transform = `translate(${x - 24}px, ${y - 22}px)`; };
+    const autoScroll = () => {   // scroll the wave screen when dragging near its edges
+      const edge = 90, h = innerHeight;
+      if (lastY < edge) scroller.scrollTop -= (edge - lastY) / 4;
+      else if (lastY > h - edge) scroller.scrollTop += (lastY - (h - edge)) / 4;
+      raf = requestAnimationFrame(autoScroll);
+    };
+    const move = ev => {
+      lastY = ev.clientY; place(ev.clientX, ev.clientY);
+      const z = zoneAt(ev.clientX, ev.clientY);
+      if (z !== over) { over?.classList.remove('over'); z?.classList.add('over'); over = z; }
+    };
+    const up = ev => {
+      cancelAnimationFrame(raf);
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+      ghost.remove(); over?.classList.remove('over');
+      const z = ev.type === 'pointerup' ? zoneAt(ev.clientX, ev.clientY) : null;
+      if (z?.dataset.zone === 'plan') { addToPlan(a); commit(); }
+      else if (z?.dataset.zone === 'fav') { if (!t.favAlts.includes(a)) t.favAlts.push(a); commit(); }
+      else draw();
+    };
+    place(e.clientX, e.clientY);
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+    raf = requestAnimationFrame(autoScroll);
+  });
+}
+
 function renderWave() {
   const w = state.wave;
   let el = $('#wave');
@@ -1140,6 +1241,7 @@ function renderWave() {
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
       <div class="card"><div class="section-title">What are you feeling underneath it?</div><div class="emo-field" id="wEmo"></div></div>
+      <div class="card"><div class="section-title">What will you do instead?</div><div id="wActs"></div></div>
       <div class="card"><div class="section-title">Ride it for</div>
         <div class="quick" id="wMin">${[5, 10, 15, 20, 30].map(m => `<button type="button" data-v="${m}" class="${w.minutes === m ? 'on' : ''}">${m} min</button>`).join('')}</div></div>
       <button class="btn block big-btn" id="wStart">Start riding</button>
@@ -1162,8 +1264,7 @@ function renderWave() {
       ${w.emotions?.length ? `<div class="emo-running">Feeling ${emoChips(w.emotions)} — that makes sense. Let it be there.</div>` : ''}
       ${t.message ? msgCard(t.message, 'Note to self') : ''}
       <div class="card tip-card"><div class="section-title">Try this</div><div id="wTip" class="wtip"></div></div>
-      ${t.alts.length ? `<div class="card"><div class="section-title">Do one of these instead</div>
-        <ul class="alts">${t.alts.map((a, i) => `<li><label><input type="checkbox" data-alt="${i}" ${w.done.includes(a) ? 'checked' : ''}><span>${esc(a)}</span></label></li>`).join('')}</ul></div>` : ''}
+      <div class="card"><div class="section-title">Do one of these instead</div><div id="wActs"></div></div>
       <div class="card"><div class="section-title">Play the tape forward</div>
         <label class="field" style="margin:0"><span>If I do it, what do I think will happen? How will I feel after — in an hour, tomorrow?</span>
         <textarea id="wExpect" maxlength="1000" placeholder="e.g. It'll feel good for 10 minutes, then I'll feel foggy and annoyed at myself and lose the evening.">${esc(w.expect || '')}</textarea></label></div>
@@ -1178,15 +1279,10 @@ function renderWave() {
       const extra = { expect: w.expect || '', feltBefore: w.emotions || [] };
       // Only end the wave once a level is picked; closing the sheet keeps you riding.
       chooseSlip(t, extra, () => {
-        t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: null, done: w.done, expect: w.expect || '', emotions: w.emotions || [], outcome: 'slipped' });
+        t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: null, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], outcome: 'slipped' });
         endWave();
       });
     };
-    $$('[data-alt]', el).forEach(cb => cb.onchange = () => {
-      const a = t.alts[+cb.dataset.alt];
-      w.done = cb.checked ? [...new Set([...w.done, a])] : w.done.filter(x => x !== a);
-      save();
-    });
     $('#wEarly', el).onclick = () => { w.phase = 'done'; w.endedAt = Date.now(); save(); keepAwake(false); renderWave(); };
   } else {
     const mins = Math.max(1, Math.round(((w.endedAt || w.endAt) - w.startAt) / MIN));
@@ -1201,13 +1297,15 @@ function renderWave() {
       </div>
     </div>`;
     const log = outcome => {
-      t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: w.after, done: w.done, expect: w.expect || '', emotions: w.emotions || [], outcome });
+      t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: w.after, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], outcome });
     };
     $('#wWin', el).onclick = () => { log('rode'); endWave(); render(); toast('Wave ridden. That counts. 💪'); };
     $('#wMore', el).onclick = () => { w.phase = 'run'; w.endAt = Date.now() + 5 * MIN; delete w.endedAt; save(); keepAwake(true); renderWave(); };
     $('#wSlip', el).onclick = () => { const extra = { expect: w.expect || '', feltBefore: w.emotions || [] }; chooseSlip(t, extra, () => { log('slipped'); endWave(); }); };
   }
 
+  const acts = $('#wActs', el);
+  if (acts) { w.done = w.done || []; mountActivities(acts, t, w); }
   $$('[data-rating]', el).forEach(r => r.onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
     w[r.dataset.rating] = +b.dataset.v; save();
