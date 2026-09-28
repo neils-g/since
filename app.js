@@ -46,6 +46,7 @@ const ICON = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>',
+  chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
 
@@ -97,7 +98,7 @@ const netAt = (t, time) => time - t.startAt - penaltyMs(t, time);
 const sortedSlips = t => [...t.slips].sort((a, b) => a.at - b.at);
 // Slips that are ready for a "how did it actually go?" reflection.
 const pendingReflections = (t, now = Date.now()) =>
-  sortedSlips(t).filter(s => s.at < now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
+  sortedSlips(t).filter(s => !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
 
 function milestoneInfo(net) {
   let i = -1;
@@ -292,10 +293,15 @@ function addSlip(t, at = Date.now(), extra = {}) {
 
 /* ───────────── views ───────────── */
 function render() {
-  const m = location.hash.match(/^#\/t\/(.+)$/);
+  const m = location.hash.match(/^#\/t\/([^/]+)(\/insights)?$/);
   const t = m && getTimer(m[1]);
   if (m && !t) { location.hash = ''; return; }
-  t ? renderDetail(t) : renderHome();
+  const prevView = app.dataset.view, view = !t ? 'home' : m[2] ? 'insights' : 'detail';
+  // Insights is static — don't rebuild it on background re-renders (keeps scroll & tooltips)
+  if (view === 'insights' && prevView === 'insights' && app.dataset.tid === t.id && !render.force) { renderWave(); return; }
+  app.dataset.view = view; app.dataset.tid = t?.id || '';
+  if (view !== prevView) scrollTo(0, 0);
+  view === 'insights' ? renderInsights(t) : t ? renderDetail(t) : renderHome();
   renderWave();
   tick();
 }
@@ -345,7 +351,7 @@ function timerCard(t, now) {
       <div class="sub" data-live="sub" data-id="${t.id}"></div>
       <div class="progress"><i data-live="bar" data-id="${t.id}"></i></div>
       <div class="next" data-live="next" data-id="${t.id}"></div>
-      ${pendingReflections(t, now).length ? `<button class="reflect-pill" data-reflect>📝 ${pendingReflections(t, now).length} reflection${pendingReflections(t, now).length === 1 ? '' : 's'} waiting — how did it go?</button>` : ''}
+      ${pendingReflections(t, now).length ? `<button class="reflect-pill" data-reflect>📝 ${pendingReflections(t, now).length} reflection${pendingReflections(t, now).length === 1 ? '' : 's'} waiting — tap to reflect</button>` : ''}
       <div class="btn-row">
         <button class="wave-btn" data-wave>🌊 Ride the wave</button>
         <button class="slip-btn" data-slip>I slipped</button>
@@ -367,7 +373,7 @@ function renderDetail(t) {
     <header class="bar">
       <button class="icon-btn" id="backBtn" aria-label="Back">${ICON.back}</button>
       <h2>${esc(t.name)}</h2>
-      <button class="icon-btn" id="editBtn" aria-label="Edit timer">${ICON.edit}</button>
+      <span class="right"><button class="icon-btn" id="insHdr" aria-label="Insights">${ICON.chart}</button><button class="icon-btn" id="editBtn" aria-label="Edit timer">${ICON.edit}</button></span>
     </header>
 
     <section class="card hero">
@@ -383,10 +389,10 @@ function renderDetail(t) {
 
     ${(() => {
       const pend = pendingReflections(t, now); if (!pend.length) return '';
-      const s = pend[0];
+      const s = pend[0], fresh = now - s.at < 30 * MIN;
       return `<section class="card reflect-card">
-        <div class="section-title">📝 How did it actually go?${pend.length > 1 ? ` <span class="chip">${pend.length} waiting</span>` : ''}</div>
-        <div class="sub">Slip on ${fmtDateTime(s.at)}</div>
+        <div class="section-title">📝 ${fresh ? 'Reflect on this slip' : 'How did it actually go?'}${pend.length > 1 ? ` <span class="chip">${pend.length} waiting</span>` : ''}</div>
+        <div class="sub">Slip on ${fmtDateTime(s.at)}${fresh ? ' — when the moment has passed, come back and walk through what actually happened. It takes about two minutes.' : ''}</div>
         ${s.expect ? `<div class="expect"><span>You expected:</span> ${esc(s.expect)}</div>` : ''}
         <div class="row"><button class="btn" id="reflectBtn">Reflect now</button><button class="btn secondary" id="skipReflect">Skip</button></div>
       </section>`;
@@ -434,6 +440,8 @@ function renderDetail(t) {
       </div>
     </section>
 
+    <button class="ins-link card" id="insBtn"><span>📊</span><span><b>Insights</b><small>Week-over-week trends, when urges hit, triggers, and whether slips deliver</small></span><span class="chev">›</span></button>
+
     <section class="card">
       <div class="section-title">Milestones</div>
       <div class="ms-grid">
@@ -458,6 +466,7 @@ function renderDetail(t) {
   `;
   $('#backBtn').onclick = () => { location.hash = ''; };
   $('#editBtn').onclick = () => openTimerSheet(t);
+  $('#insBtn').onclick = $('#insHdr').onclick = () => { location.hash = `#/t/${t.id}/insights`; };
   $('#slipBtn').onclick = () => chooseSlip(t);
   $('#waveBtn').onclick = () => startWave(t);
   $('#pastSlip').onclick = () => openSlipSheet(t, null);
@@ -842,7 +851,7 @@ function drawChart(t) {
   svg.addEventListener('pointerleave', hide);
 }
 let resizeT;
-addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { const m = location.hash.match(/^#\/t\/(.+)$/); m && getTimer(m[1]) && drawChart(getTimer(m[1])); }, 150); });
+addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { const m = location.hash.match(/^#\/t\/([^/]+)$/); m && getTimer(m[1]) && drawChart(getTimer(m[1])); }, 150); });
 
 /* ───────────── sheets ───────────── */
 function openTimerSheet(t) {

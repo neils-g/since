@@ -477,6 +477,50 @@ button.cal-cell:active { transform: scale(.94); }
 .drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; background: var(--surface); color: var(--ink); border: 2px solid var(--wave); border-radius: 12px; padding: 10px 14px; font-size: 15px; font-weight: 600; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 
+/* insights */
+.bar h2 + .right, .bar .right { display: flex; gap: 2px; }
+.ins-link { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; }
+.ins-link > span:first-child { font-size: 26px; }
+.ins-link b { display: block; font-size: 16px; }
+.ins-link small { display: block; color: var(--ink2); font-size: 13px; margin-top: 2px; }
+.ins-link .chev { margin-left: auto; font-size: 26px; color: var(--muted); }
+.ins-top { margin-bottom: 14px; }
+.ins-head { font-size: 14px; color: var(--ink2); margin: -4px 0 12px; line-height: 1.5; }
+.ins-big { font-size: 18px; line-height: 1.4; margin: 0 0 12px; }
+.ins-sub { font-size: 13px; font-weight: 700; color: var(--ink2); margin-bottom: 4px; }
+.ins-empty { color: var(--muted); font-size: 14px; padding: 16px 0; text-align: center; }
+.good { color: var(--accent); }
+.bad { color: var(--danger); }
+.ins-chart { position: relative; }
+.ins-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ins-chart .axis { fill: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.ins-chart .grid { stroke: var(--line); stroke-width: 1; }
+.heat { position: relative; }
+.heat-grid { display: grid; grid-template-columns: 30px repeat(24, minmax(0, 1fr)); gap: 2px; }
+.heat-grid i { aspect-ratio: 1; border-radius: 3px; display: block; }
+.heat-grid .hl { font-size: 10.5px; color: var(--muted); align-self: center; }
+.heat-grid .hx { grid-column: span 6; font-size: 10px; color: var(--muted); padding-top: 2px; }
+.heat-scale { display: flex; align-items: center; gap: 3px; justify-content: flex-end; margin: 10px 0 4px; font-size: 11px; color: var(--muted); }
+.heat-scale i { width: 14px; height: 14px; border-radius: 3px; display: block; }
+.heat-scale span:first-child { margin-right: 4px; } .heat-scale span:last-child { margin-left: 4px; }
+.share-wrap { position: relative; margin-top: 10px; }
+.share-bar { display: flex; height: 26px; border-radius: 8px; overflow: hidden; gap: 2px; }
+.share-bar span { display: grid; place-items: center; font-size: 11.5px; font-weight: 700; min-width: 4px; }
+.hbar-list { list-style: none; margin: 0; padding: 0; }
+.hbar-list li { display: grid; grid-template-columns: minmax(0, 1.3fr) 1fr 24px; gap: 10px; align-items: center; padding: 6px 0; font-size: 14px; }
+.hb-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb-track { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+.hb-track i { display: block; height: 100%; background: var(--wave); border-radius: 4px; }
+.hb-n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); font-weight: 600; }
+.pair { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 8px; }
+.pair-date { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.pair-row { font-size: 14px; padding: 3px 0; display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
+.pair-row span { color: var(--muted); font-size: 12px; padding-top: 2px; }
+.decisions { margin: 6px 0 0; padding: 0; list-style: none; }
+.decisions li { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--surface2); border-radius: 0 10px 10px 0; margin-bottom: 6px; font-size: 14px; }
+.decisions li span { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.ins-chart .tip, .heat .tip, .share-wrap .tip { z-index: 3; }
+
 /* guided reflection */
 .rstep { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .rstep-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
@@ -508,6 +552,7 @@ body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 <body>
 <div id="app" class="wrap"></div>
 <script src="emotions.js"></script>
+<script src="insights.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
