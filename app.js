@@ -67,6 +67,7 @@ function normalizeTimer(t) {
     })(),
     penDesc: { tiny: '', low: '', med: '', high: '', ...(t.penDesc || {}) },
     waveMin: +t.waveMin || 10,
+    detoxHours: t.detoxHours != null ? +t.detoxHours : 4,
     message: t.message != null ? String(t.message) : DEFAULT_MSG,
     alts: Array.isArray(t.alts) ? t.alts.map(String) : DEFAULT_ALTS.slice(),
     favAlts: Array.isArray(t.favAlts) ? t.favAlts.map(String) : [],
@@ -96,6 +97,12 @@ const getTimer = id => state.timers.find(t => t.id === id);
 const penaltyMs = (t, until = Infinity) => t.slips.reduce((a, s) => (s.at <= until ? a + s.hours * H : a), 0);
 const netAt = (t, time) => time - t.startAt - penaltyMs(t, time);
 const sortedSlips = t => [...t.slips].sort((a, b) => a.at - b.at);
+// "Clear-headed" countdown: restarts at every slip, lasts t.detoxHours.
+function detoxInfo(t, now = Date.now()) {
+  if (!t.detoxHours || !t.slips.length) return null;
+  const last = Math.max(...t.slips.map(s => s.at)), end = last + t.detoxHours * H;
+  return now < end ? { end, left: end - now, pct: 1 - (end - now) / (t.detoxHours * H) } : null;
+}
 // Slips that are ready for a "how did it actually go?" reflection.
 const upcomingReflection = (t, now = Date.now()) =>
   sortedSlips(t).reverse().find(s => s.at > now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
@@ -297,7 +304,7 @@ function quickCheckin(t, slip) {
   const felt = { feltBefore: [...(slip.feltBefore || [])] };
   openSheet(`
     <h3>Quick check-in</h3>
-    <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.</p>
+    <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.${t.detoxHours ? ` You should feel clear-headed again around <b>${fmtTime(slip.at + t.detoxHours * H)}</b>.` : ''}</p>
     <form id="qc">
       <div class="field"><span>😶 What are you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
       <label class="field"><span>Briefly, why?</span><input name="why" maxlength="200" placeholder="e.g. stressed about work, bored after dinner" value="${esc(slip.note)}" autocomplete="off"></label>
@@ -384,6 +391,7 @@ function timerCard(t, now) {
       <div class="sub" data-live="sub" data-id="${t.id}"></div>
       <div class="progress"><i data-live="bar" data-id="${t.id}"></i></div>
       <div class="next" data-live="next" data-id="${t.id}"></div>
+      <div class="detox" data-live="detox" data-id="${t.id}" hidden></div>
       ${pendingReflections(t, now).length ? `<button class="reflect-pill" data-reflect>📝 ${pendingReflections(t, now).length} reflection${pendingReflections(t, now).length === 1 ? '' : 's'} waiting — tap to reflect</button>` : ''}
       <div class="btn-row">
         <button class="wave-btn" data-wave>🌊 Ride the wave</button>
@@ -414,6 +422,7 @@ function renderDetail(t) {
       <div class="sub">net time since ${fmtDateTime(t.startAt)}</div>
       <div class="progress"><i data-live="bar" data-id="${t.id}"></i></div>
       <div class="next" data-live="next" data-id="${t.id}"></div>
+      <div class="detox" data-live="detox" data-id="${t.id}" hidden></div>
       <div class="btn-row">
         <button class="wave-btn lg" id="waveBtn">🌊 Ride the wave</button>
         <button class="slip-btn lg" id="slipBtn">I slipped</button>
@@ -538,6 +547,12 @@ function tick() {
       case 'next': {
         const mi = milestoneInfo(net);
         el.textContent = mi.next ? `Next: ${mi.next.e} ${mi.next.label} in ${fmtShort(mi.next.ms - net)}` : 'Every milestone reached 👑';
+        break;
+      }
+      case 'detox': {
+        const dx = detoxInfo(t, now);
+        el.hidden = !dx;
+        if (dx) el.innerHTML = `<div class="dx-top"><span>🫧 Clear-headed in <b>${fmtShort(dx.left + MIN - 1)}</b></span><span class="muted">~${fmtTime(dx.end)}</span></div><div class="dx-bar"><i style="width:${(dx.pct * 100).toFixed(1)}%"></i></div>`;
         break;
       }
       case 'reflectSoon': {
@@ -922,6 +937,8 @@ function openTimerSheet(t) {
       <div class="field"><span>What counts as each level? <em class="muted">(optional, but decide now while you're clear-headed)</em></span>
         ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
       </div>
+      <label class="field"><span>🫧 Time until clear-headed after using (hours)</span><input name="detox" type="number" inputmode="decimal" min="0" max="168" step="0.5" required value="${d.detoxHours ?? 4}">
+        <div class="hint">Shows a countdown after each slip that restarts if you use again. Set to 0 to turn it off.</div></label>
       <label class="field"><span>🌊 Ride-the-wave length (minutes)</span><input name="wave" type="number" inputmode="numeric" min="1" max="120" required value="${d.waveMin}">
         <div class="quick" data-for="wave">${[5, 10, 15, 20].map(m => `<button type="button" data-v="${m}" class="${+d.waveMin === m ? 'on' : ''}">${m} min</button>`).join('')}</div></label>
       <label class="field"><span>Message to yourself (shown when an urge hits)</span><textarea name="msg" class="autogrow" maxlength="5000" rows="5" placeholder="Write as much as you need — why you're doing this, what you'll lose, who you're doing it for.">${esc(d.message)}</textarea>
@@ -952,6 +969,7 @@ function openTimerSheet(t) {
         pen: Object.fromEntries(ALL_LEVELS.map(([k]) => [k, Math.max(0, +f.elements['pen_' + k].value || 0)])),
         penDesc: Object.fromEntries(ALL_LEVELS.map(([k]) => [k, f.elements['desc_' + k].value.trim()])),
         waveMin: Math.max(1, Math.round(+f.elements.wave.value || 10)),
+        detoxHours: Math.max(0, +f.elements.detox.value || 0),
         message: f.elements.msg.value.trim(),
         alts: f.elements.alts.value.split('\n').map(s => s.trim()).filter(Boolean),
         favAlts: (t?.favAlts || []).filter(a => f.elements.alts.value.split('\n').map(s => s.trim()).includes(a)),
