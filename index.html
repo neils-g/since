@@ -416,7 +416,14 @@ button.cal-cell:active { transform: scale(.94); }
 
 /* penalty levels */
 .level-btn { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border-radius: 16px; text-align: left; background: var(--danger-soft); }
-.level-btn.tiny { background: var(--surface2); }
+.emerg-wrap { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 12px; text-align: center; }
+.emerg-link { font-size: 13px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; padding: 6px; }
+.emerg-card { background: var(--surface2); border-radius: 14px; padding: 4px 14px; margin-bottom: 12px; font-size: 14px; line-height: 1.5; color: var(--ink2); }
+.emerg-card b { color: var(--ink); }
+.emerg-confirm { width: 100%; padding: 12px; font-size: 14px; color: var(--ink2); border: 1px solid var(--line); border-radius: 14px; }
+.emerg-row { display: flex; gap: 10px; align-items: flex-start; }
+.emerg-row input { width: 90px; flex: none; text-align: center; }
+.emerg-row .hint { margin-top: 2px; }
 .level-btn.low { background: color-mix(in oklab, var(--danger) 6%, var(--surface2)); }
 .level-btn.high { background: color-mix(in oklab, var(--danger) 20%, var(--surface)); }
 .level-btn:active { transform: scale(.98); }
@@ -425,8 +432,7 @@ button.cal-cell:active { transform: scale(.94); }
 .lv-txt b { display: block; font-size: 17px; }
 .lv-txt small { display: block; color: var(--ink2); font-size: 13px; margin-top: 2px; }
 .lv-h { font-weight: 700; color: var(--danger); font-size: 18px; font-variant-numeric: tabular-nums; }
-.pen-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-.pen-cell small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pen-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pen-cell small { display: block; font-size: 12px; color: var(--ink2); margin-bottom: 4px; }
 .pen-cell input { text-align: center; }
 .pen-desc-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }

@@ -225,9 +225,14 @@ function closeSheet(animate) {
 }
 
 /* ───────────── actions ───────────── */
-const LEVELS = [['tiny', 'A tiny bit', '🟢'], ['low', 'A little', '🟡'], ['med', 'Medium', '🟠'], ['high', 'A lot', '🔴']];
-const levelLabel = l => (LEVELS.find(x => x[0] === l) || [])[1] || '';
-const penRange = t => `−${hrs(t.pen.tiny)}–${hrs(t.pen.high)}`;
+const LEVELS = [['low', 'A little', '🟡'], ['med', 'Medium', '🟠'], ['high', 'A lot', '🔴']];
+// Kept apart from LEVELS on purpose: a deliberate, confirm-first option — never a ready choice.
+const EMERGENCY = ['tiny', 'Emergency use', '⚕︎'];
+const EMERGENCY_DEF = 'Only to ease real withdrawal symptoms — not for cravings, boredom, or stress.';
+const ALL_LEVELS = [...LEVELS, EMERGENCY];
+const emergDef = t => t.penDesc.tiny || EMERGENCY_DEF;
+const levelLabel = l => (ALL_LEVELS.find(x => x[0] === l) || [])[1] || '';
+const penRange = t => `−${hrs(t.pen.low)}–${hrs(t.pen.high)}`;
 
 // Ask how big the slip was, then log it with that level's penalty.
 function chooseSlip(t, extra = {}, onLogged) {
@@ -241,14 +246,35 @@ function chooseSlip(t, extra = {}, onLogged) {
           <span class="lv-txt"><b>${label}</b>${t.penDesc[k] ? `<small>${esc(t.penDesc[k])}</small>` : ''}</span>
           <span class="lv-h">−${hrs(t.pen[k])}</span>
         </button>`).join('')}
-    </div>`, sheet => {
-    $$('[data-level]', sheet).forEach(b => b.onclick = () => {
+    </div>
+    <div class="emerg-wrap"><button class="emerg-link" id="emergLink">Emergency use only — withdrawal relief (−${hrs(t.pen.tiny)})</button></div>`, sheet => {
+    $('#emergLink', sheet).onclick = () => {
+      // Swap the sheet's content for the confirmation step (keep the grabber and close button)
+      [...sheet.children].forEach(c => { if (!c.classList.contains('grabber') && !c.classList.contains('sheet-x')) c.remove(); });
+      sheet.insertAdjacentHTML('beforeend', `
+        <h3>Emergency use</h3>
+        <div class="emerg-card">
+          <p><b>${esc(emergDef(t))}</b></p>
+          <p>This exists so that easing genuinely rough withdrawal doesn't cost you as much as a full slip. If what you're feeling is an urge or a craving, that's a wave — you can ride it.</p>
+        </div>
+        <p class="sub">Is this to relieve real withdrawal symptoms?</p>
+        <div class="stack">
+          <button class="btn block" id="emergBack">No, go back</button>
+          <button class="btn block secondary" id="emergWave">It's a craving — ride the wave instead</button>
+          <button class="emerg-confirm" data-level="tiny">Yes, withdrawal relief — log −${hrs(t.pen.tiny)}</button>
+        </div>`);
+      $('#emergBack', sheet).onclick = () => chooseSlip(t, extra, onLogged);
+      $('#emergWave', sheet).onclick = () => { closeSheet(); if (!state.wave) startWave(t); };
+      bindLevels();
+    };
+    const bindLevels = () => $$('[data-level]', sheet).forEach(b => b.onclick = () => {
       const level = b.dataset.level, cur = getTimer(t.id);
       closeSheet();
       if (!cur) return;
       onLogged?.();
       addSlip(cur, Date.now(), { ...extra, level, hours: cur.pen[level] });
     });
+    bindLevels();
   });
 }
 
@@ -829,8 +855,12 @@ function openTimerSheet(t) {
           <label class="pen-cell"><small>${e} ${label}</small><input name="pen_${k}" type="number" inputmode="decimal" min="0" max="8760" step="0.5" required value="${d.pen[k]}"></label>`).join('')}
         </div>
         <div class="hint">Changing these only affects future slips.</div></div>
+      <div class="field emerg-field"><span>⚕︎ Emergency use penalty (hours)</span>
+        <div class="emerg-row"><input name="pen_tiny" type="number" inputmode="decimal" min="0" max="8760" step="0.5" required value="${d.pen.tiny}">
+        <div class="hint">Kept separate from the main choices and always asks you to confirm.</div></div>
+        <label class="pen-desc-row" style="margin-top:8px"><small>What counts</small><textarea name="desc_tiny" maxlength="200" rows="2" placeholder="${EMERGENCY_DEF}">${esc(d.penDesc.tiny || EMERGENCY_DEF)}</textarea></label></div>
       <div class="field"><span>What counts as each level? <em class="muted">(optional, but decide now while you're clear-headed)</em></span>
-        ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ tiny: 'just to ease withdrawal', low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
+        ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
       </div>
       <label class="field"><span>🌊 Ride-the-wave length (minutes)</span><input name="wave" type="number" inputmode="numeric" min="1" max="120" required value="${d.waveMin}">
         <div class="quick" data-for="wave">${[5, 10, 15, 20].map(m => `<button type="button" data-v="${m}" class="${+d.waveMin === m ? 'on' : ''}">${m} min</button>`).join('')}</div></label>
@@ -855,8 +885,8 @@ function openTimerSheet(t) {
       const vals = {
         name: f.elements.name.value.trim() || 'Untitled',
         startAt,
-        pen: Object.fromEntries(LEVELS.map(([k]) => [k, Math.max(0, +f.elements['pen_' + k].value || 0)])),
-        penDesc: Object.fromEntries(LEVELS.map(([k]) => [k, f.elements['desc_' + k].value.trim()])),
+        pen: Object.fromEntries(ALL_LEVELS.map(([k]) => [k, Math.max(0, +f.elements['pen_' + k].value || 0)])),
+        penDesc: Object.fromEntries(ALL_LEVELS.map(([k]) => [k, f.elements['desc_' + k].value.trim()])),
         waveMin: Math.max(1, Math.round(+f.elements.wave.value || 10)),
         message: f.elements.msg.value.trim(),
         alts: f.elements.alts.value.split('\n').map(s => s.trim()).filter(Boolean),
@@ -897,7 +927,7 @@ function openSlipSheet(t, slip, focus) {
       <div ${reflectOnly ? 'hidden' : ''}>
       <label class="field"><span>When</span><input name="at" type="datetime-local" required value="${toLocalInput(d.at)}" min="${toLocalInput(t.startAt)}" max="${toLocalInput(Date.now())}"></label>
       <label class="field"><span>How much? / Penalty (hours)</span>
-        <div class="quick" id="lvl">${LEVELS.map(([k, label, e]) => `<button type="button" data-v="${k}" class="${d.level === k ? 'on' : ''}">${e} ${label} · ${hrs(t.pen[k])}</button>`).join('')}</div>
+        <div class="quick" id="lvl">${ALL_LEVELS.map(([k, label, e]) => `<button type="button" data-v="${k}" class="${d.level === k ? 'on' : ''}">${e} ${label} · ${hrs(t.pen[k])}</button>`).join('')}</div>
         <input name="hours" type="number" inputmode="decimal" min="0" step="0.5" required value="${d.hours}" style="margin-top:8px"></label>
       <label class="field"><span>Trigger / note (optional)</span><textarea name="note" maxlength="500" placeholder="What triggered it? How were you feeling?">${esc(d.note)}</textarea></label>
       </div>
