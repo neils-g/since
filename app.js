@@ -96,7 +96,7 @@ const netAt = (t, time) => time - t.startAt - penaltyMs(t, time);
 const sortedSlips = t => [...t.slips].sort((a, b) => a.at - b.at);
 // Slips that are ready for a "how did it actually go?" reflection.
 const pendingReflections = (t, now = Date.now()) =>
-  sortedSlips(t).filter(s => s.at < now - 30 * MIN && !s.actual && !s.worth && !s.skipReflect);
+  sortedSlips(t).filter(s => s.at < now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
 
 function milestoneInfo(net) {
   let i = -1;
@@ -422,7 +422,7 @@ function renderDetail(t) {
           const r = t.slips.filter(s => s.worth);
           if (!r.length) return '';
           const n = k => r.filter(s => s.worth === k).length;
-          return `<div class="stat wide"><div class="v">${n('no')} of ${r.length}</div><div class="k">Slips you later said were <b>not worth it</b></div><div class="d">${n('yes')} worth it · ${n('meh')} meh</div></div>`;
+          return `<div class="stat wide"><div class="v">${n('no')} of ${r.length}</div><div class="k">Slips that <b>didn't give you</b> what you hoped for</div><div class="d">${n('yes')} delivered · ${n('meh')} partly</div></div>`;
         })()}
         ${(() => {
           const tally = arrs => { const m = {}; arrs.flat().forEach(w => { if (EMOTION_BY_WORD[w]) m[w] = (m[w] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5); };
@@ -445,7 +445,7 @@ function renderDetail(t) {
       ${events.length ? `<ul class="hist">${events.map(ev => ev.kind === 'slip' ? `
         <li data-slip-id="${ev.s.id}">
           <span class="dot"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
           <span class="pen">${ev.s.level ? `<small class="lv-tag">${levelLabel(ev.s.level)}</small>` : ''}−${hrs(ev.s.hours)}</span>
         </li>` : `
         <li data-wave-id="${ev.w.id}">
@@ -721,11 +721,14 @@ function openDaySheet(t, day) {
       <div class="day-entry slip" data-sid="${s.id}">
         <div class="de-head"><span class="dot"></span><b>Slip · ${fmtTime(s.at)}${s.level ? ` · ${levelLabel(s.level)}` : ''}</b><span class="pen">−${hrs(s.hours)}</span></div>
         ${s.note ? `<div class="de-row"><span>Trigger</span>${esc(s.note)}</div>` : ''}
+        ${s.decision ? `<div class="de-row"><span>🧭 The decision</span>${esc(s.decision)}</div>` : ''}
         ${s.feltBefore?.length ? `<div class="de-row"><span>😶 Feeling before</span><div class="chips">${emoChips(s.feltBefore)}</div></div>` : ''}
         <div class="de-row"><span>🔮 Expected</span>${s.expect ? esc(s.expect) : '<em>—</em>'}</div>
         <div class="de-row"><span>📝 Actually</span>${s.actual ? esc(s.actual) : '<em>not reflected yet</em>'}</div>
         ${s.feltAfter?.length ? `<div class="de-row"><span>💭 Feeling after</span><div class="chips">${emoChips(s.feltAfter)}</div></div>` : ''}
-        ${s.worth ? `<div class="de-row"><span>Verdict</span><span class="worth ${s.worth}">${worthLabel(s.worth)}</span></div>` : ''}
+        ${s.worth ? `<div class="de-row"><span>Did it deliver?</span><span class="worth ${s.worth}">${worthLabel(s.worth)}</span></div>` : ''}
+        ${s.change || s.impact ? `<div class="de-row"><span>🌱 How I've changed${s.impact ? ` · this ${impactLabel(s.impact).toLowerCase() === 'net neutral' ? 'was net neutral' : impactLabel(s.impact).toLowerCase() + ' it'}` : ''}</span>${esc(s.change || '')}</div>` : ''}
+        ${s.nextTime ? `<div class="de-row"><span>➡️ Next time I will</span>${esc(s.nextTime)}</div>` : ''}
         <button class="link-btn" data-edit="${s.id}">${s.actual ? 'Edit' : 'Reflect now'}</button>
       </div>`).join('')}
     ${waves.map(w => `
@@ -917,7 +920,10 @@ function openTimerSheet(t) {
 const feelRow = (before = [], after = []) => (before.length || after.length)
   ? `<div class="chips">${emoChips(before)}${after.length ? `<span class="arrow">→</span>${emoChips(after)}` : ''}</div>` : '';
 
-const WORTH = [['yes', 'Worth it'], ['meh', 'Meh'], ['no', 'Not worth it']];
+// Stored as 'worth' for compatibility; the question is "did it give you what you hoped?"
+const WORTH = [['yes', 'It delivered'], ['meh', 'Partly'], ['no', "Didn't deliver"]];
+const IMPACT = [['helped', 'Helped'], ['neutral', 'Net neutral'], ['hurt', 'Hurt']];
+const impactLabel = v => (IMPACT.find(x => x[0] === v) || [])[1] || '';
 const worthLabel = v => (WORTH.find(w => w[0] === v) || [])[1] || '';
 
 function openSlipSheet(t, slip, focus) {
@@ -925,7 +931,7 @@ function openSlipSheet(t, slip, focus) {
   const d = slip || { at: Date.now(), hours: t.pen.med, level: 'med', note: '', expect: '', actual: '', worth: null };
   const reflectOnly = focus === 'reflect';
   openSheet(`
-    <h3>${reflectOnly ? 'How did it actually go?' : isNew ? 'Log a past slip' : 'Slip'}</h3>
+    <h3>${reflectOnly ? 'Reflect on this slip' : isNew ? 'Log a past slip' : 'Slip'}</h3>
     ${reflectOnly ? `<p class="sub">Slip on ${fmtDateTime(d.at)}. Be honest — this is just for you.</p>` : ''}
     <form id="sf">
       <div ${reflectOnly ? 'hidden' : ''}>
@@ -935,12 +941,34 @@ function openSlipSheet(t, slip, focus) {
         <input name="hours" type="number" inputmode="decimal" min="0" step="0.5" required value="${d.hours}" style="margin-top:8px"></label>
       <label class="field"><span>Trigger / note (optional)</span><textarea name="note" maxlength="500" placeholder="What triggered it? How were you feeling?">${esc(d.note)}</textarea></label>
       </div>
-      <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
-      <label class="field"><span>🔮 What I thought would happen</span><textarea name="expect" maxlength="1000" placeholder="What did you expect doing it would be like?">${esc(d.expect)}</textarea></label>
-      <label class="field"><span>📝 What actually happened</span><textarea name="actual" maxlength="1000" placeholder="How did you feel after? What did it cost you?">${esc(d.actual)}</textarea></label>
-      <div class="field"><span>💭 How I feel now, after</span><div class="emo-field" id="feltAfter"></div></div>
-      <div class="field"><span>Was it worth it?</span>
-        <div class="quick" id="worth">${WORTH.map(([v, l]) => `<button type="button" data-v="${v}" class="${d.worth === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      <section class="rstep">
+        <div class="rstep-head"><span class="rnum">1</span><div><b>Name the decision</b>
+          <p>Say it plainly, without judgment: it was a choice. Owning it as a choice is exactly what gives you the power to make a different one.</p></div></div>
+        <label class="field"><span>The decision</span><textarea name="decision" maxlength="1000" placeholder="I chose to use again because…">${esc(d.decision || '')}</textarea></label>
+        <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
+      </section>
+      <section class="rstep">
+        <div class="rstep-head"><span class="rnum">2</span><div><b>Did it deliver?</b>
+          <p>Put what you hoped for next to what really happened.</p></div></div>
+        <label class="field"><span>🔮 What I hoped it would do</span><textarea name="expect" maxlength="1000" placeholder="What did you expect it to give you?">${esc(d.expect)}</textarea></label>
+        <label class="field"><span>📝 What actually happened</span><textarea name="actual" maxlength="1000" placeholder="How did you feel after? What did it cost you?">${esc(d.actual)}</textarea></label>
+        <div class="field"><span>💭 How I feel now</span><div class="emo-field" id="feltAfter"></div></div>
+        <div class="field"><span>Did it give you what you were hoping for?</span>
+          <div class="quick" id="worth">${WORTH.map(([v, l]) => `<button type="button" data-v="${v}" class="${d.worth === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <div class="nudge" id="deliverNudge" ${d.worth === 'no' || d.worth === 'meh' ? '' : 'hidden'}>It didn't give you what it promised. Hold onto that — the next urge will make the same promise. That's your cue to reassess the decision, not repeat it.</div></div>
+      </section>
+      <section class="rstep">
+        <div class="rstep-head"><span class="rnum">3</span><div><b>Zoom out</b>
+          <p>Look at who you've been becoming since you started — and where this fits.</p></div></div>
+        <label class="field"><span>How have I changed as a person?</span><textarea name="change" maxlength="1000" placeholder="e.g. sleeping better, more patient, getting things done…">${esc(d.change || '')}</textarea></label>
+        <div class="field"><span>Did this help that growth, hurt it, or neither?</span>
+          <div class="quick" id="impact">${IMPACT.map(([v, l]) => `<button type="button" data-v="${v}" class="${d.impact === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+      </section>
+      <section class="rstep">
+        <div class="rstep-head"><span class="rnum">4</span><div><b>Your next decision</b>
+          <p>Based on all of this, decide now — while you're clear-headed — what you'll do next time. You'll see it the next time you ride a wave.</p></div></div>
+        <label class="field"><span>Next time, I will…</span><textarea name="nextTime" maxlength="1000" placeholder="Next time the urge hits, I'll…">${esc(d.nextTime || '')}</textarea></label>
+      </section>
       <div class="stack">
         <button class="btn block" type="submit">Save</button>
         ${isNew || reflectOnly ? '' : '<button class="btn danger block" type="button" id="delSlip">Delete slip (refund penalty)</button>'}
@@ -961,8 +989,15 @@ function openSlipSheet(t, slip, focus) {
       const b = e.target.closest('button'); if (!b) return;
       worth = worth === b.dataset.v ? null : b.dataset.v;
       $$('#worth button', sheet).forEach(x => x.classList.toggle('on', x.dataset.v === worth));
+      $('#deliverNudge', sheet).hidden = !(worth === 'no' || worth === 'meh');
     };
-    if (focus) setTimeout(() => f.elements[reflectOnly ? 'actual' : 'note'].focus(), 250);
+    let impact = d.impact || null;
+    $('#impact', sheet).onclick = e => {
+      const b = e.target.closest('button'); if (!b) return;
+      impact = impact === b.dataset.v ? null : b.dataset.v;
+      $$('#impact button', sheet).forEach(x => x.classList.toggle('on', x.dataset.v === impact));
+    };
+    if (focus) setTimeout(() => f.elements[reflectOnly ? 'decision' : 'note'].focus(), 250);
     f.onsubmit = e => {
       e.preventDefault();
       const at = fromLocalInput(f.elements.at.value);
@@ -970,6 +1005,7 @@ function openSlipSheet(t, slip, focus) {
       const vals = {
         at: Math.min(at, Date.now()), hours: Math.max(0, +f.elements.hours.value || 0), note: f.elements.note.value.trim(),
         expect: f.elements.expect.value.trim(), actual: f.elements.actual.value.trim(), worth, ...felt, level,
+        decision: f.elements.decision.value.trim(), change: f.elements.change.value.trim(), impact, nextTime: f.elements.nextTime.value.trim(),
       };
       if (isNew) t.slips.push({ id: uid(), ...vals }); else Object.assign(slip, vals);
       save(); closeSheet(); render();
@@ -1100,6 +1136,7 @@ function renderWave() {
   if (w.phase === 'setup') {
     el.innerHTML = `${head}<div class="wave-body">
       ${t.message ? msgCard(t.message, 'A note from you') : ''}
+      ${(() => { const last = sortedSlips(t).reverse().find(s => s.nextTime); return last ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(last.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(last.at)}</div></div>` : ''; })()}
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
       <div class="card"><div class="section-title">What are you feeling underneath it?</div><div class="emo-field" id="wEmo"></div></div>
