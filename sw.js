@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump VERSION whenever you change a file.
-const VERSION = 'since-v2.12';
+const VERSION = 'since-v2.14';
 const FILES = ['./', 'index.html', 'emotions.js', 'insights.js', 'app.js','manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -17,8 +17,10 @@ self.addEventListener('activate', e => {
 // Network first (so updates show up), cache as fallback when offline.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // Same-origin: skip the browser's HTTP cache so a new version shows up right away.
+  const sameOrigin = new URL(e.request.url).origin === location.origin;
   e.respondWith(
-    fetch(e.request)
+    (sameOrigin ? fetch(e.request.url, { cache: 'no-cache' }) : fetch(e.request))
       .then(res => {
         const copy = res.clone();
         caches.open(VERSION).then(c => c.put(e.request, copy));

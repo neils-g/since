@@ -2,6 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
+const APP_VERSION = '2.14';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -595,6 +596,13 @@ function renderDetail(t) {
 }
 
 /* ───────────── live updates ───────────── */
+// tick() runs inside render(), so it must never call render() directly — schedule it.
+let rerenderQueued = false;
+function rerenderSoon() {
+  if (rerenderQueued) return;
+  rerenderQueued = true;
+  setTimeout(() => { rerenderQueued = false; render(); }, 0);
+}
 function tick() {
   const now = Date.now();
   $$('[data-live]').forEach(el => {
@@ -623,7 +631,7 @@ function tick() {
       }
       case 'reflectSoon': {
         const up = upcomingReflection(t, now);
-        if (!up) { render(); return; }
+        if (!up) { rerenderSoon(); return; }
         el.textContent = Math.max(1, Math.ceil((up.at + 30 * MIN - now) / MIN)) + ' min';
         break;
       }
@@ -636,8 +644,9 @@ function tick() {
   });
   // Re-render when a slip's reflection becomes due, so its prompt appears on its own.
   const due = state.timers.reduce((a, t) => a + pendingReflections(t, now).length, 0);
-  if (tick.due != null && due > tick.due && !$('.backdrop') && !$('#wave') && app.dataset.view !== 'insights') render();
+  const prevDue = tick.due;
   tick.due = due;
+  if (prevDue != null && due > prevDue && !$('.backdrop') && !$('#wave') && app.dataset.view !== 'insights') rerenderSoon();
   checkCelebrations(now);
   tickWave(now);
 }
@@ -778,7 +787,8 @@ function openEmotionPicker({ title = 'How are you feeling?', selected = [], onDo
           </div></div>
           <div class="emo-detail" id="eDetail"></div>` : `
           <div class="emo-scroll list">
-            <input class="emo-search" id="eSearch" type="search" placeholder="Search feelings or descriptions" value="${esc(pk.q)}">
+            <input class="emo-search" id="eSearch" type="search" placeholder="Search feelings or descriptions" value="${esc(pk.q)}" autocomplete="off" autocorrect="off" autocapitalize="off">
+            <div class="ins-empty" id="eNone" hidden>No feelings match that — try a different word.</div>
             ${Object.keys(QUADRANTS).map(q => `
               <h4 class="emo-h" data-qh="${q}"><span class="ed-dot" style="--q:var(--q-${q})"></span>${QUADRANTS[q].label}</h4>
               ${EMOTIONS.filter(e => e.quad === q).sort((a, b) => a.word.localeCompare(b.word)).map(e => `
@@ -801,6 +811,7 @@ function openEmotionPicker({ title = 'How are you feeling?', selected = [], onDo
           const q = pk.q.toLowerCase();
           $$('.emo-row', el).forEach(r => { const e = EMOTION_BY_WORD[r.dataset.w]; r.hidden = !!q && !(e.word.toLowerCase().includes(q) || e.desc.toLowerCase().includes(q)); });
           $$('[data-qh]', el).forEach(h => { h.hidden = !$$(`.emo-row[data-q="${h.dataset.qh}"]`, el).some(r => !r.hidden); });
+          $('#eNone', el).hidden = $$('.emo-row', el).some(r => !r.hidden);
         };
         $('#eSearch', el).oninput = e => { pk.q = e.target.value; filter(); };
         filter();
@@ -1194,7 +1205,8 @@ function openSettings() {
     <div class="stack">
       <button class="btn block" id="exportBtn">Export backup</button>
       <label class="btn secondary block" style="display:block;text-align:center">Import backup<input type="file" id="importIn" accept="application/json,.json" hidden></label>
-    </div>`, sheet => {
+    </div>
+    <p class="muted small center" style="margin-top:18px">Since · version ${APP_VERSION}</p>`, sheet => {
     const reopen = () => { const top = sheet.scrollTop; render(); openSettings(); $('.sheet').scrollTop = top; };
     $$('[data-theme-id]', sheet).forEach(b => b.onclick = () => { setPref('theme', b.dataset.themeId); reopen(); });
     $$('#modeCtl button', sheet).forEach(b => b.onclick = () => { setPref('mode', b.dataset.v); reopen(); });
