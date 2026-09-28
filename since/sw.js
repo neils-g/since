@@ -1,6 +1,6 @@
 // Offline cache for the app shell. Bump VERSION whenever you change a file.
-const VERSION = 'since-v2.1';
-const FILES = ['./', 'index.html', 'emotions.js', 'app.js','manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+const VERSION = 'since-v1';
+const FILES = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
