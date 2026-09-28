@@ -529,6 +529,23 @@ body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 .dx-top .muted { font-size: 12px; }
 .dx-bar { height: 5px; border-radius: 99px; background: var(--surface); margin-top: 8px; overflow: hidden; }
 .dx-bar i { display: block; height: 100%; background: var(--wave); border-radius: 99px; }
+/* future-self messages & Why I quit */
+.future-bubble { position: relative; background: linear-gradient(160deg, color-mix(in oklab, var(--gold) 16%, var(--surface)), var(--surface) 80%); border: 1px solid color-mix(in oklab, var(--gold) 35%, var(--line)); border-radius: 20px; padding: 14px 16px; margin-bottom: 14px; }
+.fb-label { font-size: 12px; font-weight: 700; color: var(--ink2); margin-bottom: 6px; }
+.fb-text { font-size: 17px; line-height: 1.5; font-style: italic; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fb-pin { margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--gold); padding: 6px 10px; border-radius: 99px; background: var(--gold-soft); }
+.fb-pin.on { opacity: .75; }
+.why-quit { margin-top: 22px; }
+.why-quit .section-title .link-btn { font-size: 14px; }
+.why-item { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
+.why-text { font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.why-in-wave .why-text + .why-text { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+.why-meta { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.why-x { color: var(--muted); padding: 4px 6px; font-size: 13px; }
+.why-empty { font-size: 14px; color: var(--muted); border: 2px dashed var(--line); border-radius: 14px; padding: 14px; line-height: 1.5; }
+.pin-check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: -4px 0 16px; color: var(--ink2); }
+.pin-check input { width: 20px; height: 20px; accent-color: var(--gold); }
+.select { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 16px; }
 /* guided reflection */
 .rstep { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .rstep-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }

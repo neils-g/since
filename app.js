@@ -71,6 +71,8 @@ function normalizeTimer(t) {
     message: t.message != null ? String(t.message) : DEFAULT_MSG,
     alts: Array.isArray(t.alts) ? t.alts.map(String) : DEFAULT_ALTS.slice(),
     favAlts: Array.isArray(t.favAlts) ? t.favAlts.map(String) : [],
+    // "Why I quit" — pinned reminders: { id, text, at, slipId? }
+    pinned: Array.isArray(t.pinned) ? t.pinned : [],
     slips: Array.isArray(t.slips) ? t.slips.map(s => ({ ...s, id: s.id || uid(), at: +s.at, hours: +s.hours, note: String(s.note || ''), expect: String(s.expect || ''), actual: String(s.actual || '') })) : [],
     waves: Array.isArray(t.waves) ? t.waves : [],
     celebrated: t.celebrated != null ? t.celebrated : -1,
@@ -105,9 +107,9 @@ function detoxInfo(t, now = Date.now()) {
 }
 // Slips that are ready for a "how did it actually go?" reflection.
 const upcomingReflection = (t, now = Date.now()) =>
-  sortedSlips(t).reverse().find(s => s.at > now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
+  sortedSlips(t).reverse().find(s => s.at > now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.futureMsg && !s.skipReflect);
 const pendingReflections = (t, now = Date.now()) =>
-  sortedSlips(t).filter(s => s.at <= now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.skipReflect);
+  sortedSlips(t).filter(s => s.at <= now - 30 * MIN && !s.actual && !s.worth && !s.decision && !s.nextTime && !s.futureMsg && !s.skipReflect);
 
 function milestoneInfo(net) {
   let i = -1;
@@ -331,6 +333,46 @@ function quickCheckin(t, slip) {
   });
 }
 
+/* ───────────── future-self messages & "Why I quit" ───────────── */
+// Most recent message-to-future-me across all timers.
+function latestFutureMsg() {
+  let best = null;
+  state.timers.forEach(t => t.slips.forEach(s => { if (s.futureMsg && (!best || s.at > best.s.at)) best = { t, s }; }));
+  return best;
+}
+const isPinned = (t, s) => t.pinned.some(p => p.slipId === s.id);
+function pinMessage(t, s) {
+  if (isPinned(t, s)) return;
+  t.pinned.unshift({ id: uid(), text: s.futureMsg, at: s.at, slipId: s.id });
+  save(); render(); toast('📌 Pinned to Why I quit');
+}
+function unpin(t, p) {
+  const i = t.pinned.indexOf(p); if (i < 0) return;
+  t.pinned.splice(i, 1); save(); render();
+  toast('Unpinned', [{ label: 'Undo', fn: () => { t.pinned.splice(i, 0, p); save(); render(); } }]);
+}
+function openAddReason() {
+  const multi = state.timers.length > 1;
+  openSheet(`
+    <h3>Add a reason</h3>
+    <form id="rf">
+      ${multi ? `<label class="field"><span>For</span><select name="tid" class="select">${state.timers.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label>` : ''}
+      <label class="field"><span>Why did you quit? What do you never want to feel again?</span>
+        <textarea name="text" maxlength="1000" rows="4" required placeholder="e.g. Waking up at noon feeling empty and ashamed."></textarea></label>
+      <button class="btn block" type="submit">Pin it</button>
+    </form>`, sheet => {
+    const f = $('#rf', sheet);
+    setTimeout(() => f.elements.text.focus(), 250);
+    f.onsubmit = e => {
+      e.preventDefault();
+      const t = getTimer(multi ? f.elements.tid.value : state.timers[0].id), text = f.elements.text.value.trim();
+      if (!t || !text) return;
+      t.pinned.unshift({ id: uid(), text, at: Date.now() });
+      save(); closeSheet(true); render();
+    };
+  });
+}
+
 /* ───────────── views ───────────── */
 function render() {
   const m = location.hash.match(/^#\/t\/([^/]+)(\/insights)?$/);
@@ -363,6 +405,15 @@ function renderHome() {
       </div>
     </header>
     ${install}
+    ${(() => {
+      const lm = latestFutureMsg(); if (!lm) return '';
+      const pinned = isPinned(lm.t, lm.s);
+      return `<section class="future-bubble">
+        <div class="fb-label">💌 From you, after your slip on ${fmtDate(lm.s.at)}${state.timers.length > 1 ? ` · ${esc(lm.t.name)}` : ''}</div>
+        <div class="fb-text">${esc(lm.s.futureMsg)}</div>
+        <button class="fb-pin ${pinned ? 'on' : ''}" id="pinLatest" ${pinned ? 'disabled' : ''}>${pinned ? '📌 Pinned to Why I quit' : '＋ Pin to Why I quit'}</button>
+      </section>`;
+    })()}
     ${state.timers.length ? state.timers.map(t => timerCard(t, now)).join('') : `
       <div class="empty">
         <div class="big">⏳</div>
@@ -370,7 +421,22 @@ function renderHome() {
         <div>Track how long since you quit something. Slip up? Take a penalty instead of starting over.</div>
         <button class="btn" id="emptyAdd">Create your first timer</button>
       </div>`}
+    ${state.timers.length ? `
+    <section class="why-quit">
+      <div class="section-title">📌 Why I quit <button class="link-btn" id="addReason">+ Add a reason</button></div>
+      ${state.timers.some(t => t.pinned.length) ? state.timers.flatMap(t => t.pinned.map(p => `
+        <div class="why-item" data-tid="${t.id}" data-pid="${p.id}">
+          <div class="why-text">${esc(p.text)}</div>
+          <div class="why-meta">${p.slipId ? `From your slip on ${fmtDate(p.at)}` : `Added ${fmtDate(p.at)}`}${state.timers.length > 1 ? ` · ${esc(t.name)}` : ''}<button class="why-x" data-unpin aria-label="Unpin">✕</button></div>
+        </div>`)).join('') : '<div class="why-empty">Pin the reminders that hit hardest — from your reflections, or add one now. They\'ll live here and show up when you ride a wave.</div>'}
+    </section>` : ''}
   `;
+  $('#pinLatest') && ($('#pinLatest').onclick = () => { const lm = latestFutureMsg(); lm && pinMessage(lm.t, lm.s); });
+  $('#addReason') && ($('#addReason').onclick = openAddReason);
+  $$('[data-unpin]').forEach(b => b.onclick = () => {
+    const item = b.closest('.why-item'), t = getTimer(item.dataset.tid);
+    unpin(t, t.pinned.find(p => p.id === item.dataset.pid));
+  });
   $('#addBtn').onclick = $('#emptyAdd') ? ($('#emptyAdd').onclick = () => openTimerSheet()) : () => openTimerSheet();
   $('#settingsBtn').onclick = openSettings;
   $('#hideInstall') && ($('#hideInstall').onclick = () => { state.hideInstall = true; save(); render(); });
@@ -500,7 +566,7 @@ function renderDetail(t) {
       ${events.length ? `<ul class="hist">${events.map(ev => ev.kind === 'slip' ? `
         <li data-slip-id="${ev.s.id}">
           <span class="dot"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
           <span class="pen">${ev.s.level ? `<small class="lv-tag">${levelLabel(ev.s.level)}</small>` : ''}−${hrs(ev.s.hours)}</span>
         </li>` : `
         <li data-wave-id="${ev.w.id}">
@@ -800,6 +866,7 @@ function openDaySheet(t, day) {
         ${s.feltAfter?.length ? `<div class="de-row"><span>💭 Feeling after</span><div class="chips">${emoChips(s.feltAfter)}</div></div>` : ''}
         ${s.worth ? `<div class="de-row"><span>Did it deliver?</span><span class="worth ${s.worth}">${worthLabel(s.worth)}</span></div>` : ''}
         ${s.change || s.impact ? `<div class="de-row"><span>🌱 How I've changed${s.impact ? ` · this ${impactLabel(s.impact).toLowerCase() === 'net neutral' ? 'was net neutral' : impactLabel(s.impact).toLowerCase() + ' it'}` : ''}</span>${esc(s.change || '')}</div>` : ''}
+        ${s.futureMsg ? `<div class="de-row"><span>💌 Message to future me</span>${esc(s.futureMsg)}</div>` : ''}
         ${s.nextTime ? `<div class="de-row"><span>➡️ Next time I will</span>${esc(s.nextTime)}</div>` : ''}
         <button class="link-btn" data-edit="${s.id}">${s.actual ? 'Edit' : 'Reflect now'}</button>
       </div>`).join('')}
@@ -1042,9 +1109,11 @@ function openSlipSheet(t, slip, focus) {
           <div class="quick" id="impact">${IMPACT.map(([v, l]) => `<button type="button" data-v="${v}" class="${d.impact === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       </section>
       <section class="rstep">
-        <div class="rstep-head"><span class="rnum">4</span><div><b>Your next decision</b>
-          <p>Based on all of this, decide now — while you're clear-headed — what you'll do next time. You'll see it the next time you ride a wave.</p></div></div>
-        <label class="field"><span>Next time, I will…</span><textarea name="nextTime" maxlength="1000" placeholder="Next time the urge hits, I'll…">${esc(d.nextTime || '')}</textarea></label>
+        <div class="rstep-head"><span class="rnum">4</span><div><b>Write to future you</b>
+          <p>Right now you know exactly how this feels. Write it down for the version of you who'll face the next urge — it'll sit at the top of your home screen.</p></div></div>
+        <label class="field"><span>💌 A message to future me</span><textarea name="futureMsg" maxlength="1000" rows="4" placeholder="e.g. Remember lying awake at 3am feeling hollow. It's never worth it.">${esc(d.futureMsg || '')}</textarea></label>
+        <label class="pin-check"><input type="checkbox" name="pinIt" ${slip && isPinned(t, slip) ? 'checked disabled' : ''}> 📌 Also pin it to <b>Why I quit</b></label>
+        <label class="field"><span>➡️ Next time, I will…</span><textarea name="nextTime" maxlength="1000" placeholder="Next time the urge hits, I'll…">${esc(d.nextTime || '')}</textarea></label>
       </section>
       <div class="stack">
         <button class="btn block" type="submit">Save</button>
@@ -1082,9 +1151,13 @@ function openSlipSheet(t, slip, focus) {
       const vals = {
         at: Math.min(at, Date.now()), hours: Math.max(0, +f.elements.hours.value || 0), note: f.elements.note.value.trim(),
         expect: f.elements.expect.value.trim(), actual: f.elements.actual.value.trim(), worth, ...felt, level,
-        decision: f.elements.decision.value.trim(), change: f.elements.change.value.trim(), impact, nextTime: f.elements.nextTime.value.trim(),
+        decision: f.elements.decision.value.trim(), change: f.elements.change.value.trim(), impact, nextTime: f.elements.nextTime.value.trim(), futureMsg: f.elements.futureMsg.value.trim(),
       };
-      if (isNew) t.slips.push({ id: uid(), ...vals }); else Object.assign(slip, vals);
+      let target = slip;
+      if (isNew) { target = { id: uid(), ...vals }; t.slips.push(target); } else Object.assign(slip, vals);
+      if (f.elements.pinIt.checked && !f.elements.pinIt.disabled && target.futureMsg) t.pinned.unshift({ id: uid(), text: target.futureMsg, at: target.at, slipId: target.id });
+      // keep a pinned copy in sync if the message was edited
+      t.pinned.forEach(p => { if (p.slipId === target.id && target.futureMsg) p.text = target.futureMsg; });
       save(); closeSheet(); render();
     };
     $('#delSlip', sheet) && ($('#delSlip', sheet).onclick = () => {
@@ -1325,7 +1398,12 @@ function renderWave() {
   if (w.phase === 'setup') {
     el.innerHTML = `${head}<div class="wave-body">
       ${t.message ? msgCard(t.message, 'A note from you') : ''}
-      ${(() => { const last = sortedSlips(t).reverse().find(s => s.nextTime); return last ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(last.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(last.at)}</div></div>` : ''; })()}
+      ${(() => {
+        const msg = sortedSlips(t).reverse().find(s => s.futureMsg), dec = sortedSlips(t).reverse().find(s => s.nextTime);
+        return `${msg ? `<div class="card future-bubble in-wave"><div class="fb-label">💌 From you, after your slip on ${fmtDate(msg.at)}</div><div class="fb-text">${esc(msg.futureMsg)}</div></div>` : ''}
+          ${dec ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(dec.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(dec.at)}</div></div>` : ''}
+          ${t.pinned.length ? `<div class="card why-in-wave"><div class="section-title">📌 Why you quit</div>${t.pinned.map(p => `<div class="why-text">${esc(p.text)}</div>`).join('')}</div>` : ''}`;
+      })()}
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
       <div class="card"><div class="section-title">What are you feeling underneath it?</div><div class="emo-field" id="wEmo"></div></div>
