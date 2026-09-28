@@ -864,7 +864,8 @@ function openTimerSheet(t) {
       </div>
       <label class="field"><span>🌊 Ride-the-wave length (minutes)</span><input name="wave" type="number" inputmode="numeric" min="1" max="120" required value="${d.waveMin}">
         <div class="quick" data-for="wave">${[5, 10, 15, 20].map(m => `<button type="button" data-v="${m}" class="${+d.waveMin === m ? 'on' : ''}">${m} min</button>`).join('')}</div></label>
-      <label class="field"><span>Message to yourself (shown when an urge hits)</span><textarea name="msg" maxlength="500">${esc(d.message)}</textarea></label>
+      <label class="field"><span>Message to yourself (shown when an urge hits)</span><textarea name="msg" class="autogrow" maxlength="5000" rows="5" placeholder="Write as much as you need — why you're doing this, what you'll lose, who you're doing it for.">${esc(d.message)}</textarea>
+        <div class="hint">Shown when you start riding a wave and during it. Line breaks are kept.</div></label>
       <label class="field"><span>Alternative activities (one per line)</span><textarea name="alts" rows="6">${esc(d.alts.join('\n'))}</textarea></label>
       <div class="stack">
         <button class="btn block" type="submit">${isNew ? 'Start timer' : 'Save'}</button>
@@ -877,6 +878,9 @@ function openTimerSheet(t) {
       f.elements[q.dataset.for].value = b.dataset.v;
       $$('button', q).forEach(x => x.classList.toggle('on', x === b));
     }));
+    // Let the message box grow with its content
+    const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
+    $$('.autogrow', sheet).forEach(ta => { grow(ta); ta.addEventListener('input', () => grow(ta)); });
     if (isNew) setTimeout(() => f.elements.name.focus(), 250);
     f.onsubmit = e => {
       e.preventDefault();
@@ -1074,6 +1078,14 @@ function endWave() {
 
 const ratingHTML = (name, val) => `<div class="rating" data-rating="${name}">${Array.from({ length: 10 }, (_, i) => `<button type="button" data-v="${i + 1}" class="${val === i + 1 ? 'on' : ''}">${i + 1}</button>`).join('')}</div><div class="rating-scale"><span>mild</span><span>overwhelming</span></div>`;
 
+// Message-to-self card; long messages start collapsed with a "read it all" toggle.
+function msgCard(text, title) {
+  const long = text.length > 320 || text.split('\n').length > 6;
+  return `<div class="card msg-card ${long ? 'collapsed' : ''}"><div class="section-title">${title}</div>
+    <div class="msg">${esc(text)}</div>
+    ${long ? `<button type="button" class="link-btn msg-toggle" onclick="const c=this.closest('.msg-card');c.classList.toggle('collapsed');this.textContent=c.classList.contains('collapsed')?'Read the whole message':'Show less'">Read the whole message</button>` : ''}</div>`;
+}
+
 function renderWave() {
   const w = state.wave;
   let el = $('#wave');
@@ -1087,6 +1099,7 @@ function renderWave() {
 
   if (w.phase === 'setup') {
     el.innerHTML = `${head}<div class="wave-body">
+      ${t.message ? msgCard(t.message, 'A note from you') : ''}
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
       <div class="card"><div class="section-title">What are you feeling underneath it?</div><div class="emo-field" id="wEmo"></div></div>
@@ -1110,7 +1123,7 @@ function renderWave() {
         <div class="ring-center"><div class="count num" id="wCount"></div><div class="breath-txt" id="wBreath"></div></div>
       </div>
       ${w.emotions?.length ? `<div class="emo-running">Feeling ${emoChips(w.emotions)} — that makes sense. Let it be there.</div>` : ''}
-      ${t.message ? `<div class="card msg-card"><div class="section-title">Note to self</div><div class="msg">${esc(t.message)}</div></div>` : ''}
+      ${t.message ? msgCard(t.message, 'Note to self') : ''}
       <div class="card tip-card"><div class="section-title">Try this</div><div id="wTip" class="wtip"></div></div>
       ${t.alts.length ? `<div class="card"><div class="section-title">Do one of these instead</div>
         <ul class="alts">${t.alts.map((a, i) => `<li><label><input type="checkbox" data-alt="${i}" ${w.done.includes(a) ? 'checked' : ''}><span>${esc(a)}</span></label></li>`).join('')}</ul></div>` : ''}
