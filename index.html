@@ -547,6 +547,17 @@ body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 .pin-check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: -4px 0 16px; color: var(--ink2); }
 .pin-check input { width: 20px; height: 20px; accent-color: var(--gold); }
 .select { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 16px; }
+.why-item { cursor: pointer; }
+.why-photo { margin: -2px -4px 10px; border-radius: 10px; overflow: hidden; background: var(--surface2); }
+.why-photo img { display: block; width: 100%; max-height: 320px; object-fit: cover; }
+.why-in-wave .why-entry + .why-entry { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+.why-in-wave .why-photo { margin: 0 0 8px; }
+.photo-pick .pp-preview { border-radius: 12px; overflow: hidden; margin-bottom: 10px; background: var(--surface2); }
+.photo-pick .pp-preview img { display: block; width: 100%; max-height: 260px; object-fit: cover; }
+.pp-btns { display: flex; gap: 8px; }
+.pp-btns .btn { padding: 10px 14px; font-size: 15px; cursor: pointer; }
+.photo-view { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.92); display: grid; place-items: center; padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom); animation: fade .15s; }
+.photo-view img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 /* guided reflection */
 .rstep { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .rstep-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
@@ -579,6 +590,7 @@ body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 <div id="app" class="wrap"></div>
 <script src="emotions.js"></script>
 <script src="insights.js"></script>
+<script src="media.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

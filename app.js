@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.14';
+const APP_VERSION = '2.15';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -352,26 +352,78 @@ function unpin(t, p) {
   t.pinned.splice(i, 1); save(); render();
   toast('Unpinned', [{ label: 'Undo', fn: () => { t.pinned.splice(i, 0, p); save(); render(); } }]);
 }
-function openAddReason() {
-  const multi = state.timers.length > 1;
+// Add (t, p undefined) or edit a "Why I quit" item — text and/or a photo.
+function openReasonSheet(t, p) {
+  const isNew = !p, multi = isNew && state.timers.length > 1;
+  let newBlob = null, removeImg = false;
   openSheet(`
-    <h3>Add a reason</h3>
+    <h3>${isNew ? 'Add a reason' : 'Edit reason'}</h3>
     <form id="rf">
-      ${multi ? `<label class="field"><span>For</span><select name="tid" class="select">${state.timers.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label>` : ''}
+      ${multi ? `<label class="field"><span>For</span><select name="tid" class="select">${state.timers.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>` : ''}
+      <div class="field"><span>Photo (optional)</span>
+        <div class="photo-pick">
+          <div class="pp-preview" id="ppPrev" ${p?.img ? '' : 'hidden'}>${p?.img ? `<img data-img="${p.img}" alt="">` : ''}</div>
+          <div class="pp-btns">
+            <label class="btn secondary">📷 <span id="ppLabel">${p?.img ? 'Change photo' : 'Add a photo'}</span><input type="file" accept="image/*" id="ppIn" hidden></label>
+            <button type="button" class="btn secondary" id="ppRm" ${p?.img ? '' : 'hidden'}>Remove</button>
+          </div>
+          <div class="hint">A photo of what you lost, who you're doing this for, or how you want to feel. It stays on this phone.</div>
+        </div></div>
       <label class="field"><span>Why did you quit? What do you never want to feel again?</span>
-        <textarea name="text" maxlength="1000" rows="4" required placeholder="e.g. Waking up at noon feeling empty and ashamed."></textarea></label>
-      <button class="btn block" type="submit">Pin it</button>
+        <textarea name="text" maxlength="1000" rows="4" placeholder="e.g. Waking up at noon feeling empty and ashamed.">${esc(p?.text || '')}</textarea></label>
+      <div class="stack">
+        <button class="btn block" type="submit" id="rfSave">${isNew ? 'Pin it' : 'Save'}</button>
+        ${isNew ? '' : '<button class="btn danger block" type="button" id="rfDel">Unpin</button>'}
+      </div>
     </form>`, sheet => {
-    const f = $('#rf', sheet);
-    setTimeout(() => f.elements.text.focus(), 250);
-    f.onsubmit = e => {
+    hydrateImages(sheet);
+    const f = $('#rf', sheet), prev = $('#ppPrev', sheet);
+    if (isNew) setTimeout(() => f.elements.text.focus(), 250);
+    $('#ppIn', sheet).onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      $('#rfSave', sheet).disabled = true;
+      try {
+        newBlob = await compressImage(file); removeImg = false;
+        prev.innerHTML = `<img src="${URL.createObjectURL(newBlob)}" alt="">`; prev.hidden = false;
+        $('#ppLabel', sheet).textContent = 'Change photo'; $('#ppRm', sheet).hidden = false;
+      } catch (err) { toast("Couldn't read that photo — try another"); }
+      $('#rfSave', sheet).disabled = false;
+      e.target.value = '';
+    };
+    $('#ppRm', sheet).onclick = () => {
+      newBlob = null; removeImg = true;
+      prev.innerHTML = ''; prev.hidden = true;
+      $('#ppLabel', sheet).textContent = 'Add a photo'; $('#ppRm', sheet).hidden = true;
+    };
+    f.onsubmit = async e => {
       e.preventDefault();
-      const t = getTimer(multi ? f.elements.tid.value : state.timers[0].id), text = f.elements.text.value.trim();
-      if (!t || !text) return;
-      t.pinned.unshift({ id: uid(), text, at: Date.now() });
+      const text = f.elements.text.value.trim();
+      const keepsImg = (p?.img && !removeImg) || newBlob;
+      if (!text && !keepsImg) return toast('Add some words or a photo');
+      const tt = isNew ? getTimer(multi ? f.elements.tid.value : state.timers[0].id) : t;
+      if (!tt) return;
+      let img = removeImg ? null : p?.img || null;
+      if (newBlob) {
+        const id = uid();
+        try { await Media.put(id, newBlob); } catch (err) { return toast('Not enough storage to save that photo'); }
+        img = id;
+      }
+      if (p?.img && p.img !== img) Media.del(p.img).catch(() => {});
+      if (isNew) tt.pinned.unshift({ id: uid(), text, at: Date.now(), img });
+      else Object.assign(p, { text, img });
       save(); closeSheet(true); render();
     };
+    $('#rfDel', sheet) && ($('#rfDel', sheet).onclick = () => { closeSheet(true); unpin(t, p); });
   });
+}
+const openAddReason = () => openReasonSheet();
+
+// Remove stored photos that nothing refers to anymore (e.g. after an unpin).
+async function cleanupMedia() {
+  try {
+    const used = new Set(state.timers.flatMap(t => t.pinned.map(p => p.img).filter(Boolean)));
+    for (const k of await Media.keys()) if (!used.has(k)) await Media.del(k);
+  } catch (e) { /* storage unavailable */ }
 }
 
 /* ───────────── views ───────────── */
@@ -427,17 +479,23 @@ function renderHome() {
       <div class="section-title">📌 Why I quit <button class="link-btn" id="addReason">+ Add a reason</button></div>
       ${state.timers.some(t => t.pinned.length) ? state.timers.flatMap(t => t.pinned.map(p => `
         <div class="why-item" data-tid="${t.id}" data-pid="${p.id}">
-          <div class="why-text">${esc(p.text)}</div>
+          ${p.img ? `<div class="why-photo"><img data-img="${p.img}" alt=""></div>` : ''}
+          ${p.text ? `<div class="why-text">${esc(p.text)}</div>` : ''}
           <div class="why-meta">${p.slipId ? `From your slip on ${fmtDate(p.at)}` : `Added ${fmtDate(p.at)}`}${state.timers.length > 1 ? ` · ${esc(t.name)}` : ''}<button class="why-x" data-unpin aria-label="Unpin">✕</button></div>
-        </div>`)).join('') : '<div class="why-empty">Pin the reminders that hit hardest — from your reflections, or add one now. They\'ll live here and show up when you ride a wave.</div>'}
+        </div>`)).join('') : '<div class="why-empty">Pin the reminders that hit hardest — from your reflections, or add one now (words, a photo, or both). They\'ll live here and show up when you ride a wave.</div>'}
     </section>` : ''}
   `;
   $('#pinLatest') && ($('#pinLatest').onclick = () => { const lm = latestFutureMsg(); lm && pinMessage(lm.t, lm.s); });
   $('#addReason') && ($('#addReason').onclick = openAddReason);
-  $$('[data-unpin]').forEach(b => b.onclick = () => {
-    const item = b.closest('.why-item'), t = getTimer(item.dataset.tid);
-    unpin(t, t.pinned.find(p => p.id === item.dataset.pid));
+  $$('.why-item').forEach(item => item.onclick = e => {
+    const t = getTimer(item.dataset.tid), p = t?.pinned.find(x => x.id === item.dataset.pid);
+    if (!p) return;
+    if (e.target.closest('[data-unpin]')) return unpin(t, p);
+    const img = e.target.closest('.why-photo img');
+    if (img?.src) return openPhoto(img.src);
+    openReasonSheet(t, p);
   });
+  hydrateImages(app);
   $('#addBtn').onclick = $('#emptyAdd') ? ($('#emptyAdd').onclick = () => openTimerSheet()) : () => openTimerSheet();
   $('#settingsBtn').onclick = openSettings;
   $('#hideInstall') && ($('#hideInstall').onclick = () => { state.hideInstall = true; save(); render(); });
@@ -1218,7 +1276,11 @@ function openSettings() {
 
 async function exportData() {
   const name = `since-backup-${new Date().toISOString().slice(0, 10)}.json`;
-  const blob = new Blob([JSON.stringify({ app: 'since', version: 1, exportedAt: Date.now(), timers: state.timers }, null, 2)], { type: 'application/json' });
+  const images = {};
+  for (const id of state.timers.flatMap(t => t.pinned.map(p => p.img).filter(Boolean))) {
+    try { const b = await Media.get(id); if (b) images[id] = await blobToDataURL(b); } catch (e) { /* skip */ }
+  }
+  const blob = new Blob([JSON.stringify({ app: 'since', version: 2, exportedAt: Date.now(), timers: state.timers, images })], { type: 'application/json' });
   const file = new File([blob], name, { type: 'application/json' });
   try {
     if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: 'Since backup' }); return; }
@@ -1235,6 +1297,9 @@ async function importData(file) {
     const data = JSON.parse(await file.text());
     if (!Array.isArray(data.timers)) throw new Error('bad');
     if (!confirm(`Replace your current ${state.timers.length} timer(s) with ${data.timers.length} from this backup?`)) return;
+    for (const [id, url] of Object.entries(data.images || {})) {
+      try { await Media.put(id, await dataURLToBlob(url)); } catch (e) { /* skip */ }
+    }
     state.timers = data.timers.map(normalizeTimer);
     state.timers.forEach(t => { t.celebrated = Math.max(t.celebrated, milestoneInfo(netAt(t, Date.now())).reached); });
     save(); closeSheet(); location.hash = ''; render();
@@ -1414,7 +1479,7 @@ function renderWave() {
         const msg = sortedSlips(t).reverse().find(s => s.futureMsg), dec = sortedSlips(t).reverse().find(s => s.nextTime);
         return `${msg ? `<div class="card future-bubble in-wave"><div class="fb-label">💌 From you, after your slip on ${fmtDate(msg.at)}</div><div class="fb-text">${esc(msg.futureMsg)}</div></div>` : ''}
           ${dec ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(dec.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(dec.at)}</div></div>` : ''}
-          ${t.pinned.length ? `<div class="card why-in-wave"><div class="section-title">📌 Why you quit</div>${t.pinned.map(p => `<div class="why-text">${esc(p.text)}</div>`).join('')}</div>` : ''}`;
+          ${t.pinned.length ? `<div class="card why-in-wave"><div class="section-title">📌 Why you quit</div>${t.pinned.map(p => `<div class="why-entry">${p.img ? `<div class="why-photo"><img data-img="${p.img}" alt=""></div>` : ''}${p.text ? `<div class="why-text">${esc(p.text)}</div>` : ''}</div>`).join('')}</div>` : ''}`;
       })()}
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
@@ -1482,6 +1547,8 @@ function renderWave() {
     $('#wSlip', el).onclick = () => { const extra = { expect: w.expect || '', feltBefore: w.emotions || [] }; chooseSlip(t, extra, () => { log('slipped'); endWave(); }); };
   }
 
+  hydrateImages(el);
+  $$('.why-in-wave .why-photo img', el).forEach(img => img.onclick = () => img.src && openPhoto(img.src));
   const acts = $('#wActs', el);
   if (acts) { w.done = w.done || []; mountActivities(acts, t, w); }
   $$('[data-rating]', el).forEach(r => r.onclick = e => {
@@ -1520,6 +1587,7 @@ function tickWave(now) {
 
 /* ───────────── boot ───────────── */
 applyTheme();
+setTimeout(cleanupMedia, 3000);
 addEventListener('hashchange', render);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
