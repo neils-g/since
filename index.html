@@ -611,6 +611,14 @@ body:has(.drag-ghost) { -webkit-user-select: none; user-select: none; }
 .overtime { margin: 6px auto 8px; max-width: 320px; font-size: 14.5px; line-height: 1.45; color: var(--ink); background: var(--wave-soft); border-radius: 12px; padding: 8px 12px; font-variant-numeric: tabular-nums; }
 .wave-note { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font-size: 16px; resize: vertical; }
 textarea.journal { min-height: 120px; max-height: 55vh; line-height: 1.5; overflow-y: auto; }
+.chart-wrap .sleep-band { fill: color-mix(in oklab, var(--wave) 9%, transparent); }
+.lg-sleep { background: color-mix(in oklab, var(--wave) 18%, var(--surface)); border-radius: 3px !important; }
+.awake-row { display: inline-flex; align-items: center; gap: 6px; }
+.awake-row input { padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; }
+.mood-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.mood-row button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border-radius: 12px; background: var(--surface2); font-size: 12px; font-weight: 600; color: var(--ink2); border: 2px solid transparent; }
+.mood-row button span { font-size: 24px; }
+.mood-row button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
 /* guided reflection */
 .rstep { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 4px; }
 .rstep-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }

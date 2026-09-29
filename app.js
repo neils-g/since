@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.18';
+const APP_VERSION = '2.19';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -314,11 +314,12 @@ function addSlip(t, at = Date.now(), extra = {}) {
 // The full reflection unlocks REFLECT_DELAY later, once the moment has passed.
 const REFLECT_DELAY = 30 * MIN;
 function quickCheckin(t, slip) {
-  const felt = { feltBefore: [...(slip.feltBefore || [])], halt: [...(slip.halt || [])] };
+  const felt = { feltBefore: [...(slip.feltBefore || [])], halt: [...(slip.halt || [])], mood: slip.mood ?? null };
   openSheet(`
     <h3>Quick check-in</h3>
     <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.${t.detoxHours ? ` You should feel clear-headed again around <b>${fmtTime(slip.at + t.detoxHours * H)}</b>.` : ''}</p>
     <form id="qc">
+      <div class="field"><span>Mood right now</span>${moodHTML(slip.mood)}</div>
       <div class="field"><span>Were you…</span><div id="qcHalt"></div></div>
       <div class="field"><span>😶 What are you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
       <label class="field"><span>Briefly, why?</span><input name="why" maxlength="200" placeholder="e.g. stressed about work, bored after dinner" value="${esc(slip.note)}" autocomplete="off"></label>
@@ -330,10 +331,11 @@ function quickCheckin(t, slip) {
     </form>`, sheet => {
     bindEmoField($('#qcFelt', sheet), felt, 'feltBefore', 'What are you feeling?', 'Name the feeling');
     bindHaltField($('#qcHalt', sheet), felt);
+    bindMood(sheet, felt);
     const f = $('#qc', sheet);
     f.onsubmit = e => {
       e.preventDefault();
-      Object.assign(slip, { feltBefore: felt.feltBefore, halt: felt.halt, note: f.elements.why.value.trim() });
+      Object.assign(slip, { feltBefore: felt.feltBefore, halt: felt.halt, mood: felt.mood, note: f.elements.why.value.trim() });
       save(); closeSheet(true); render();
       toast('Saved. Reflection in 30 min.');
     };
@@ -596,7 +598,7 @@ function renderDetail(t) {
         </span>
       </div>
       <div class="chart-wrap" id="chart"></div>
-      <div class="legend"><span><i class="lg-slip"></i>Slip</span><span><i class="lg-wave"></i>Wave ridden</span><span><i class="lg-line"></i>Net time</span></div>
+      <div class="legend"><span><i class="lg-slip"></i>Slip</span><span><i class="lg-wave"></i>Wave ridden</span><span><i class="lg-line"></i>Net time</span><span><i class="lg-sleep"></i>Asleep (${fmtHM(prefs().awakeTo)}–${fmtHM(prefs().awakeFrom)})</span></div>
     </section>
 
     <section class="card">
@@ -653,7 +655,7 @@ function renderDetail(t) {
         </li>` : ev.kind === 'slip' ? `
         <li data-slip-id="${ev.s.id}">
           <span class="dot"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${ev.s.halt?.length ? `<div class="chips">${haltChips(ev.s.halt)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.mood ? ` <span title="${moodInfo(ev.s.mood)[2]}">${moodInfo(ev.s.mood)[1]}</span>` : ''}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${ev.s.halt?.length ? `<div class="chips">${haltChips(ev.s.halt)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
           <span class="pen">${ev.s.level ? `<small class="lv-tag">${levelLabel(ev.s.level)}</small>` : ''}−${hrs(ev.s.hours)}</span>
         </li>` : `
         <li data-wave-id="${ev.w.id}">
@@ -789,7 +791,21 @@ const THEMES = [
   { id: 'ocean', name: 'Ocean', light: ['#eef5fa', '#ffffff', '#0e7c9a'], dark: ['#0a1520', '#10202e', '#38bdf8'] },
   { id: 'mono', name: 'Mono', light: ['#fafafa', '#ffffff', '#0a0a0a'], dark: ['#000000', '#111111', '#fafafa'] },
 ];
-const prefs = () => ({ theme: 'evergreen', mode: 'system', font: 'standard', ...(state.prefs || {}) });
+const prefs = () => ({ theme: 'evergreen', mode: 'system', font: 'standard', awakeFrom: '07:30', awakeTo: '23:30', ...(state.prefs || {}) });
+const hm = str => { const [h, m] = String(str).split(':').map(Number); return (h || 0) * H + (m || 0) * MIN; };
+const fmtHM = str => fmtTime(dayStart(Date.now()) + hm(str));
+// Sleep intervals [start, end] overlapping [a, b], from the awake-hours setting.
+function sleepBands(a, b) {
+  const p = prefs(), wake = hm(p.awakeFrom), bed = hm(p.awakeTo), out = [];
+  for (let d = dayStart(a) - D; d <= b; d = nextDay(d)) {
+    const s0 = bed > wake ? d + bed : d + bed;            // bedtime this day
+    const s1 = bed > wake ? nextDay(d) + wake : d + wake; // wake next morning (or same day if bedtime is after midnight)
+    const lo = Math.max(a, s0), hi = Math.min(b, s1);
+    if (hi > lo) out.push([lo, hi]);
+  }
+  return out;
+}
+const isAsleep = tm => sleepBands(tm - 1, tm + 1).length > 0;
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');
 function applyTheme() {
   const p = prefs(), root = document.documentElement;
@@ -968,6 +984,7 @@ function openDaySheet(t, day) {
         <div class="de-head"><span class="dot"></span><b>Slip · ${fmtTime(s.at)}${s.level ? ` · ${levelLabel(s.level)}` : ''}</b><span class="pen">−${hrs(s.hours)}</span></div>
         ${s.note ? `<div class="de-row"><span>Trigger</span>${esc(s.note)}</div>` : ''}
         ${s.decision ? `<div class="de-row"><span>🧭 The decision</span>${esc(s.decision)}</div>` : ''}
+        ${s.mood ? `<div class="de-row"><span>Mood</span>${moodInfo(s.mood)[1]} ${moodInfo(s.mood)[2]}</div>` : ''}
         ${s.halt?.length ? `<div class="de-row"><span>HALT</span><div class="chips">${haltChips(s.halt)}</div></div>` : ''}
         ${s.feltBefore?.length ? `<div class="de-row"><span>😶 Feeling before</span><div class="chips">${emoChips(s.feltBefore)}</div></div>` : ''}
         <div class="de-row"><span>🔮 Expected</span>${s.expect ? esc(s.expect) : '<em>—</em>'}</div>
@@ -1048,6 +1065,9 @@ function drawChart(t) {
     const anchor = i === 0 ? 'start' : i === nX ? 'end' : 'middle';
     xt += `<text class="axis" x="${X(tm).toFixed(1)}" y="${HT - 6}" text-anchor="${anchor}">${i === nX ? 'Now' : short ? fmtTime(tm) : fmtDate(tm)}</text>`;
   }
+  // Night bands (sleeping hours) — skipped when the range is too long to read them.
+  const bands = x1 - x0 <= 62 * D ? sleepBands(x0, x1).map(([a, b]) =>
+    `<rect class="sleep-band" x="${X(a).toFixed(1)}" y="${pt}" width="${Math.max(0.5, X(b) - X(a)).toFixed(1)}" height="${HT - pt - pb}"/>`).join('') : '';
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
   const area = `${line}L${X(x1).toFixed(1)},${Y(0).toFixed(1)}L${X(x0).toFixed(1)},${Y(0).toFixed(1)}Z`;
   const dots = slipMarks.map(m => `<circle class="slipdot" r="4.5" cx="${X(m.t).toFixed(1)}" cy="${Y(m.v).toFixed(1)}"/>`).join('')
@@ -1055,7 +1075,7 @@ function drawChart(t) {
 
   wrap.innerHTML = `
     <svg width="${W}" height="${HT}" viewBox="0 0 ${W} ${HT}" role="img" aria-label="Net time trend for ${esc(t.name)}">
-      ${grid}${xt}
+      ${bands}${grid}${xt}
       <path class="area" d="${area}"/><path class="line" d="${line}"/>
       <g class="hov" style="display:none"><line class="xh" y1="${pt}" y2="${HT - pb}"/><circle class="hdot" r="5"/></g>
       ${dots}
@@ -1079,7 +1099,7 @@ function drawChart(t) {
       ? `<b>Slip −${hrs(near.s.hours)}</b> · ${fmtDateTime(tm)}${near.s.note ? `<br>${esc(near.s.note.slice(0, 60))}` : ''}`
       : near?.k === 'wave'
         ? `<b>🌊 Rode out a wave</b><br>${fmtDateTime(tm)}${near.w.before ? ` · urge ${near.w.before}→${near.w.after || '?'}` : ''}`
-        : `<b>${fmtShort(val)}</b> net<br>${fmtDateTime(tm)}`;
+        : `<b>${fmtShort(val)}</b> net<br>${fmtDateTime(tm)}${isAsleep(tm) ? ' · 🌙 asleep' : ' · ☀️ awake'}`;
     tip.style.left = Math.max(70, Math.min(W - 70, cx)) + 'px';
     tip.style.top = Math.max(-44, cy - 58) + 'px';
     tip.classList.add('show');
@@ -1180,6 +1200,18 @@ const feelRow = (before = [], after = []) => (before.length || after.length)
   ? `<div class="chips">${emoChips(before)}${after.length ? `<span class="arrow">→</span>${emoChips(after)}` : ''}</div>` : '';
 
 // Stored as 'worth' for compatibility; the question is "did it give you what you hoped?"
+const MOODS = [[1, '😞', 'Awful'], [2, '🙁', 'Low'], [3, '😐', 'Okay'], [4, '🙂', 'Good'], [5, '😄', 'Great']];
+const moodInfo = v => MOODS.find(m => m[0] === v);
+const moodHTML = val => `<div class="mood-row" data-mood>${MOODS.map(([v, e, l]) => `<button type="button" data-v="${v}" class="${val === v ? 'on' : ''}"><span>${e}</span>${l}</button>`).join('')}</div>`;
+function bindMood(root, obj, key = 'mood') {
+  const r = $('[data-mood]', root);
+  r.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    obj[key] = obj[key] === +b.dataset.v ? null : +b.dataset.v;
+    $$('button', r).forEach(x => x.classList.toggle('on', +x.dataset.v === obj[key]));
+  };
+}
+
 const WORTH = [['yes', 'It delivered'], ['meh', 'Partly'], ['no', "Didn't deliver"]];
 const IMPACT = [['helped', 'Helped'], ['neutral', 'Net neutral'], ['hurt', 'Hurt']];
 const impactLabel = v => (IMPACT.find(x => x[0] === v) || [])[1] || '';
@@ -1205,6 +1237,7 @@ function openSlipSheet(t, slip, focus) {
           <p>Say it plainly, without judgment: it was a choice. Owning it as a choice is exactly what gives you the power to make a different one.</p></div></div>
         ${d.note ? `<div class="expect"><span>In the moment you said:</span> ${esc(d.note)}</div>` : ''}
         <label class="field"><span>The decision</span><textarea name="decision" maxlength="1000" placeholder="I chose to use again because…">${esc(d.decision || '')}</textarea></label>
+        <div class="field"><span>Mood at the time</span>${moodHTML(d.mood)}</div>
         <div class="field"><span>Was I…</span><div id="slipHalt"></div></div>
         <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
       </section>
@@ -1248,8 +1281,9 @@ function openSlipSheet(t, slip, focus) {
       level = b.dataset.v; f.elements.hours.value = t.pen[level];
       $$('#lvl button', sheet).forEach(x => x.classList.toggle('on', x === b));
     };
-    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])], halt: [...(d.halt || [])] };
+    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])], halt: [...(d.halt || [])], mood: d.mood ?? null };
     bindHaltField($('#slipHalt', sheet), felt);
+    bindMood(sheet, felt);
     bindEmoField($('#feltBefore', sheet), felt, 'feltBefore', 'How were you feeling?', 'Add feelings');
     bindEmoField($('#feltAfter', sheet), felt, 'feltAfter', 'How do you feel now?', 'Add feelings');
     $('#worth', sheet).onclick = e => {
@@ -1348,6 +1382,7 @@ function openSettings() {
     }).join('')}</div>
     <div class="set-row"><span>Appearance</span><span class="seg-ctl" id="modeCtl">${[['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([v, l]) => `<button data-v="${v}" class="${prefs().mode === v ? 'on' : ''}">${l}</button>`).join('')}</span></div>
     <div class="set-row"><span>Font</span><span class="seg-ctl" id="fontCtl">${[['standard', 'Standard'], ['rounded', 'Rounded']].map(([v, l]) => `<button data-v="${v}" class="${prefs().font === v ? 'on' : ''}">${l}</button>`).join('')}</span></div>
+    <div class="set-row"><span>Awake hours</span><span class="awake-row"><input type="time" id="awFrom" value="${prefs().awakeFrom}"> – <input type="time" id="awTo" value="${prefs().awakeTo}"></span></div>
     <div class="section-title" style="margin-top:22px">Backup</div>
     <p class="sub">Your data lives only on this device. Export a backup now and then (especially before switching phones or clearing Safari data).</p>
     <div class="stack">
@@ -1359,6 +1394,8 @@ function openSettings() {
     $$('[data-theme-id]', sheet).forEach(b => b.onclick = () => { setPref('theme', b.dataset.themeId); reopen(); });
     $$('#modeCtl button', sheet).forEach(b => b.onclick = () => { setPref('mode', b.dataset.v); reopen(); });
     $$('#fontCtl button', sheet).forEach(b => b.onclick = () => { setPref('font', b.dataset.v); reopen(); });
+    $('#awFrom', sheet).onchange = e => { if (e.target.value) { setPref('awakeFrom', e.target.value); render(); } };
+    $('#awTo', sheet).onchange = e => { if (e.target.value) { setPref('awakeTo', e.target.value); render(); } };
     $('#exportBtn', sheet).onclick = exportData;
     $('#importIn', sheet).onchange = e => importData(e.target.files[0]);
   });

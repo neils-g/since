@@ -272,6 +272,14 @@ function renderInsights(t) {
       ${before.length ? `<div class="share-wrap">${shareBar(['red', 'yellow', 'blue', 'green'].map(q => ({ label: QUADRANTS[q].label, n: quadCount(q), color: `var(--q-${q})`, ink: `var(--q-${q}-ink)` })))}<div class="tip"></div></div>
         ${legend(['red', 'yellow', 'blue', 'green'].filter(q => quadCount(q)).map(q => [QUADRANTS[q].label, `var(--q-${q})`]))}` : ''}
       <div class="ins-sub" style="margin-top:16px">Feelings in waves you rode out</div>${chipsWithCounts(rodeFeel)}
+      ${(() => {
+        const moods = t.slips.filter(s => s.mood);
+        if (!moods.length) return '';
+        const avg = moods.reduce((a, s) => a + s.mood, 0) / moods.length;
+        const mx = Math.max(...MOODS.map(([v]) => moods.filter(s => s.mood === v).length));
+        return `<div class="ins-sub" style="margin-top:16px">Mood when slipping · avg ${moodInfo(Math.round(avg))[1]} ${avg.toFixed(1)}/5</div>
+          <ul class="hbar-list">${MOODS.map(([v, e, l]) => { const n = moods.filter(s => s.mood === v).length; return `<li><span class="hb-l">${e} ${l}</span><span class="hb-track"><i style="width:${n / mx * 100}%"></i></span><span class="hb-n">${n}</span></li>`; }).join('')}</ul>`;
+      })()}
     </section>
 
     <section class="card">
