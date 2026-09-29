@@ -145,6 +145,23 @@ function renderInsights(t) {
     return `<span class="${good ? 'good' : 'bad'}">${d > 0 ? '↑' : '↓'} ${Math.abs(d)} vs last week</span>`;
   };
 
+  // day to day (last 14 days, today last)
+  const days14 = Array.from({ length: 14 }, (_, i) => {
+    const start = addDays(dayStart(now), i - 13), end = addDays(start, 1), inDay = at => at >= start && at < end;
+    return { start, slips: t.slips.filter(s => inDay(s.at)), urges: urgeEvents(t).filter(e => inDay(e.at)).length };
+  });
+  const today = { slips: days14[13].slips.length, urges: days14[13].urges }, yest = { slips: days14[12].slips.length, urges: days14[12].urges };
+  const dayDelta = (a, b, lowerIsBetter) => {
+    const d = a - b; if (!d) return `<span class="muted">same as yesterday (${b})</span>`;
+    const cls = lowerIsBetter == null ? 'muted' : (lowerIsBetter ? d < 0 : d > 0) ? 'good' : 'bad';
+    return `<span class="${cls}">${d > 0 ? '↑' : '↓'} ${Math.abs(d)} vs yesterday (${b})</span>`;
+  };
+  const cleanStreakDays = (() => { let n = 0; for (let i = 13; i >= 0 && !days14[i].slips.length; i--) n++; return n; })();
+  const dayHead = today.slips === 0 && yest.slips > 0 ? `<b class="good">No slips today</b> — yesterday had ${yest.slips}.`
+    : today.slips < yest.slips ? `<b class="good">${yest.slips - today.slips} fewer</b> than yesterday so far.`
+      : today.slips > yest.slips ? `<b class="bad">${today.slips - yest.slips} more</b> than yesterday. Check the HALT and heatmap below.`
+        : cleanStreakDays >= 2 ? `<b class="good">${cleanStreakDays} days in a row</b> with no slips.` : 'Tap a bar for details.';
+
   // waves
   const rated = t.waves.filter(w => w.outcome === 'rode' && w.before && w.after);
   const avgDrop = rated.length ? (rated.reduce((a, w) => a + (w.before - w.after), 0) / rated.length).toFixed(1) : null;
@@ -202,11 +219,24 @@ function renderInsights(t) {
     </header>
 
     <div class="stats ins-top">
+      <div class="stat"><div class="v">${today.slips}</div><div class="k">Slips today</div><div class="d">${dayDelta(today.slips, yest.slips, true)}</div></div>
+      <div class="stat"><div class="v">${today.urges}</div><div class="k">Urges today</div><div class="d">${dayDelta(today.urges, yest.urges, null)}</div></div>
       <div class="stat"><div class="v">${cur.slips.length}</div><div class="k">Slips this week</div><div class="d">${delta(cur.slips.length, prev?.slips.length, true)}</div></div>
       <div class="stat"><div class="v">${cur.rode}</div><div class="k">Waves ridden this week</div><div class="d">${delta(cur.rode, prev?.rode, false)}</div></div>
       <div class="stat"><div class="v">${cur.kept == null ? '—' : Math.round(cur.kept * 100) + '%'}</div><div class="k">Time kept this week</div><div class="d">${prev?.kept != null && cur.kept != null ? `${Math.round(prev.kept * 100)}% last week` : ''}</div></div>
       <div class="stat"><div class="v">${totalWaves ? pct(rodeAll, totalWaves) + '%' : '—'}</div><div class="k">Of waves ridden out</div><div class="d">${avgDrop ? `urge drops ${avgDrop} pts on avg` : ''}</div></div>
     </div>
+
+    <section class="card">
+      <div class="section-title">Slips per day</div>
+      <p class="ins-head">${dayHead}</p>
+      ${barChart({
+        labels: days14.map((d, i) => i === 13 ? 'Today' : (13 - i) % 2 === 1 ? '' : new Date(d.start).toLocaleDateString(undefined, { weekday: 'narrow' }) + new Date(d.start).getDate()),
+        series: LEVEL_SERIES.map(([k, , p]) => ({ color: dangerMix(p), values: days14.map(d => d.slips.filter(s => (s.level || 'med') === k).length) })),
+        tips: days14.map(d => `<b>${new Date(d.start).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</b><br>${d.slips.length} slip${d.slips.length === 1 ? '' : 's'}${d.slips.length ? ` · −${+d.slips.reduce((a, s) => a + s.hours, 0).toFixed(1)}h` : ''}<br>${d.urges} urge${d.urges === 1 ? '' : 's'} noticed`),
+        height: 150,
+      })}
+    </section>
 
     <section class="card">
       <div class="section-title">Slips per week</div>
@@ -273,12 +303,19 @@ function renderInsights(t) {
         ${legend(['red', 'yellow', 'blue', 'green'].filter(q => quadCount(q)).map(q => [QUADRANTS[q].label, `var(--q-${q})`]))}` : ''}
       <div class="ins-sub" style="margin-top:16px">Feelings in waves you rode out</div>${chipsWithCounts(rodeFeel)}
       ${(() => {
-        const moods = t.slips.filter(s => s.mood);
-        if (!moods.length) return '';
-        const avg = moods.reduce((a, s) => a + s.mood, 0) / moods.length;
-        const mx = Math.max(...MOODS.map(([v]) => moods.filter(s => s.mood === v).length));
-        return `<div class="ins-sub" style="margin-top:16px">Mood when slipping · avg ${moodInfo(Math.round(avg))[1]} ${avg.toFixed(1)}/5</div>
-          <ul class="hbar-list">${MOODS.map(([v, e, l]) => { const n = moods.filter(s => s.mood === v).length; return `<li><span class="hb-l">${e} ${l}</span><span class="hb-track"><i style="width:${n / mx * 100}%"></i></span><span class="hb-n">${n}</span></li>`; }).join('')}</ul>`;
+        const stage = key => tally(t.slips.map(s => s[key] || []));
+        const during = stage('feltDuring'), after = stage('feltAfter');
+        if (!during.length && !after.length) return '';
+        const topQuad = key => {
+          const c = {}; t.slips.flatMap(s => s[key] || []).forEach(w => { const q = EMOTION_BY_WORD[w]?.quad; if (q) c[q] = (c[q] || 0) + 1; });
+          const q = Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0];
+          return q ? `<span class="qpill" style="--q:var(--q-${q})">${QUADRANTS[q].label}</span>` : '<span class="muted">—</span>';
+        };
+        return `<div class="ins-sub" style="margin-top:16px">Feelings while slipping</div>${chipsWithCounts(during)}
+          <div class="ins-sub" style="margin-top:16px">Feelings after</div>${chipsWithCounts(after)}
+          <div class="ins-sub" style="margin-top:16px">How your mood usually shifts</div>
+          <div class="shift">${topQuad('feltBefore')}<span class="arrow">→</span>${topQuad('feltDuring')}<span class="arrow">→</span>${topQuad('feltAfter')}</div>
+          <div class="muted small">Most common mood quadrant before → during → after a slip.</div>`;
       })()}
     </section>
 

@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.19';
+const APP_VERSION = '2.20';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -314,14 +314,14 @@ function addSlip(t, at = Date.now(), extra = {}) {
 // The full reflection unlocks REFLECT_DELAY later, once the moment has passed.
 const REFLECT_DELAY = 30 * MIN;
 function quickCheckin(t, slip) {
-  const felt = { feltBefore: [...(slip.feltBefore || [])], halt: [...(slip.halt || [])], mood: slip.mood ?? null };
+  const felt = { feltBefore: [...(slip.feltBefore || [])], feltDuring: [...(slip.feltDuring || [])], halt: [...(slip.halt || [])] };
   openSheet(`
     <h3>Quick check-in</h3>
     <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.${t.detoxHours ? ` You should feel clear-headed again around <b>${fmtTime(slip.at + t.detoxHours * H)}</b>.` : ''}</p>
     <form id="qc">
-      <div class="field"><span>Mood right now</span>${moodHTML(slip.mood)}</div>
       <div class="field"><span>Were you…</span><div id="qcHalt"></div></div>
-      <div class="field"><span>😶 What are you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
+      <div class="field"><span>😶 Before — what were you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
+      <div class="field"><span>🌀 Right now, while it's happening</span><div class="emo-field" id="qcDuring"></div></div>
       <label class="field"><span>Briefly, why?</span><input name="why" maxlength="200" placeholder="e.g. stressed about work, bored after dinner" value="${esc(slip.note)}" autocomplete="off"></label>
       <div class="stack">
         <button class="btn block" type="submit">Save</button>
@@ -329,13 +329,13 @@ function quickCheckin(t, slip) {
       </div>
       <p class="qc-foot">Your full reflection will be ready in 30 minutes, once the moment has passed. <button type="button" class="link-btn" id="qcUndo">Undo this slip</button></p>
     </form>`, sheet => {
-    bindEmoField($('#qcFelt', sheet), felt, 'feltBefore', 'What are you feeling?', 'Name the feeling');
+    bindEmoField($('#qcFelt', sheet), felt, 'feltBefore', 'Before — what were you feeling?', 'Name the feeling');
+    bindEmoField($('#qcDuring', sheet), felt, 'feltDuring', 'Right now — how do you feel?', 'Name the feeling');
     bindHaltField($('#qcHalt', sheet), felt);
-    bindMood(sheet, felt);
     const f = $('#qc', sheet);
     f.onsubmit = e => {
       e.preventDefault();
-      Object.assign(slip, { feltBefore: felt.feltBefore, halt: felt.halt, mood: felt.mood, note: f.elements.why.value.trim() });
+      Object.assign(slip, { feltBefore: felt.feltBefore, feltDuring: felt.feltDuring, halt: felt.halt, note: f.elements.why.value.trim() });
       save(); closeSheet(true); render();
       toast('Saved. Reflection in 30 min.');
     };
@@ -655,7 +655,7 @@ function renderDetail(t) {
         </li>` : ev.kind === 'slip' ? `
         <li data-slip-id="${ev.s.id}">
           <span class="dot"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.mood ? ` <span title="${moodInfo(ev.s.mood)[2]}">${moodInfo(ev.s.mood)[1]}</span>` : ''}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${ev.s.halt?.length ? `<div class="chips">${haltChips(ev.s.halt)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${ev.s.halt?.length ? `<div class="chips">${haltChips(ev.s.halt)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter, ev.s.feltDuring)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
           <span class="pen">${ev.s.level ? `<small class="lv-tag">${levelLabel(ev.s.level)}</small>` : ''}−${hrs(ev.s.hours)}</span>
         </li>` : `
         <li data-wave-id="${ev.w.id}">
@@ -984,11 +984,11 @@ function openDaySheet(t, day) {
         <div class="de-head"><span class="dot"></span><b>Slip · ${fmtTime(s.at)}${s.level ? ` · ${levelLabel(s.level)}` : ''}</b><span class="pen">−${hrs(s.hours)}</span></div>
         ${s.note ? `<div class="de-row"><span>Trigger</span>${esc(s.note)}</div>` : ''}
         ${s.decision ? `<div class="de-row"><span>🧭 The decision</span>${esc(s.decision)}</div>` : ''}
-        ${s.mood ? `<div class="de-row"><span>Mood</span>${moodInfo(s.mood)[1]} ${moodInfo(s.mood)[2]}</div>` : ''}
         ${s.halt?.length ? `<div class="de-row"><span>HALT</span><div class="chips">${haltChips(s.halt)}</div></div>` : ''}
         ${s.feltBefore?.length ? `<div class="de-row"><span>😶 Feeling before</span><div class="chips">${emoChips(s.feltBefore)}</div></div>` : ''}
         <div class="de-row"><span>🔮 Expected</span>${s.expect ? esc(s.expect) : '<em>—</em>'}</div>
         <div class="de-row"><span>📝 Actually</span>${s.actual ? esc(s.actual) : '<em>not reflected yet</em>'}</div>
+        ${s.feltDuring?.length ? `<div class="de-row"><span>🌀 Feeling during</span><div class="chips">${emoChips(s.feltDuring)}</div></div>` : ''}
         ${s.feltAfter?.length ? `<div class="de-row"><span>💭 Feeling after</span><div class="chips">${emoChips(s.feltAfter)}</div></div>` : ''}
         ${s.worth ? `<div class="de-row"><span>Did it deliver?</span><span class="worth ${s.worth}">${worthLabel(s.worth)}</span></div>` : ''}
         ${s.change || s.impact ? `<div class="de-row"><span>🌱 How I've changed${s.impact ? ` · this ${impactLabel(s.impact).toLowerCase() === 'net neutral' ? 'was net neutral' : impactLabel(s.impact).toLowerCase() + ' it'}` : ''}</span>${esc(s.change || '')}</div>` : ''}
@@ -1196,22 +1196,13 @@ function openTimerSheet(t) {
   });
 }
 
-const feelRow = (before = [], after = []) => (before.length || after.length)
-  ? `<div class="chips">${emoChips(before)}${after.length ? `<span class="arrow">→</span>${emoChips(after)}` : ''}</div>` : '';
+// Feelings across a slip: before → during → after (any may be empty).
+const feelRow = (before = [], after = [], during = []) => {
+  const stages = [[before, 'before'], [during, 'during'], [after, 'after']].filter(([x]) => x?.length);
+  return stages.length ? `<div class="chips">${stages.map(([x, l]) => `<span class="stage">${l}</span>${emoChips(x)}`).join('<span class="arrow">→</span>')}</div>` : '';
+};
 
 // Stored as 'worth' for compatibility; the question is "did it give you what you hoped?"
-const MOODS = [[1, '😞', 'Awful'], [2, '🙁', 'Low'], [3, '😐', 'Okay'], [4, '🙂', 'Good'], [5, '😄', 'Great']];
-const moodInfo = v => MOODS.find(m => m[0] === v);
-const moodHTML = val => `<div class="mood-row" data-mood>${MOODS.map(([v, e, l]) => `<button type="button" data-v="${v}" class="${val === v ? 'on' : ''}"><span>${e}</span>${l}</button>`).join('')}</div>`;
-function bindMood(root, obj, key = 'mood') {
-  const r = $('[data-mood]', root);
-  r.onclick = e => {
-    const b = e.target.closest('button'); if (!b) return;
-    obj[key] = obj[key] === +b.dataset.v ? null : +b.dataset.v;
-    $$('button', r).forEach(x => x.classList.toggle('on', +x.dataset.v === obj[key]));
-  };
-}
-
 const WORTH = [['yes', 'It delivered'], ['meh', 'Partly'], ['no', "Didn't deliver"]];
 const IMPACT = [['helped', 'Helped'], ['neutral', 'Net neutral'], ['hurt', 'Hurt']];
 const impactLabel = v => (IMPACT.find(x => x[0] === v) || [])[1] || '';
@@ -1237,9 +1228,9 @@ function openSlipSheet(t, slip, focus) {
           <p>Say it plainly, without judgment: it was a choice. Owning it as a choice is exactly what gives you the power to make a different one.</p></div></div>
         ${d.note ? `<div class="expect"><span>In the moment you said:</span> ${esc(d.note)}</div>` : ''}
         <label class="field"><span>The decision</span><textarea name="decision" maxlength="1000" placeholder="I chose to use again because…">${esc(d.decision || '')}</textarea></label>
-        <div class="field"><span>Mood at the time</span>${moodHTML(d.mood)}</div>
         <div class="field"><span>Was I…</span><div id="slipHalt"></div></div>
         <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
+        <div class="field"><span>🌀 How I felt while it was happening</span><div class="emo-field" id="feltDuring"></div></div>
       </section>
       <section class="rstep">
         <div class="rstep-head"><span class="rnum">2</span><div><b>Did it deliver?</b>
@@ -1281,11 +1272,11 @@ function openSlipSheet(t, slip, focus) {
       level = b.dataset.v; f.elements.hours.value = t.pen[level];
       $$('#lvl button', sheet).forEach(x => x.classList.toggle('on', x === b));
     };
-    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])], halt: [...(d.halt || [])], mood: d.mood ?? null };
+    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])], halt: [...(d.halt || [])], feltDuring: [...(d.feltDuring || [])] };
     bindHaltField($('#slipHalt', sheet), felt);
-    bindMood(sheet, felt);
     bindEmoField($('#feltBefore', sheet), felt, 'feltBefore', 'How were you feeling?', 'Add feelings');
     bindEmoField($('#feltAfter', sheet), felt, 'feltAfter', 'How do you feel now?', 'Add feelings');
+    bindEmoField($('#feltDuring', sheet), felt, 'feltDuring', 'How did you feel while it was happening?', 'Add feelings');
     $('#worth', sheet).onclick = e => {
       const b = e.target.closest('button'); if (!b) return;
       worth = worth === b.dataset.v ? null : b.dataset.v;
