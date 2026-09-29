@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.15';
+const APP_VERSION = '2.16';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -76,6 +76,10 @@ function normalizeTimer(t) {
     pinned: Array.isArray(t.pinned) ? t.pinned : [],
     slips: Array.isArray(t.slips) ? t.slips.map(s => ({ ...s, id: s.id || uid(), at: +s.at, hours: +s.hours, note: String(s.note || ''), expect: String(s.expect || ''), actual: String(s.actual || '') })) : [],
     waves: Array.isArray(t.waves) ? t.waves : [],
+    urges: Array.isArray(t.urges) ? t.urges : [],            // quick urge logs
+    plans: Array.isArray(t.plans) ? t.plans.map(p => ({ days: [], from: null, to: null, ...p })) : [],  // if-then plans
+    rewards: Array.isArray(t.rewards) ? t.rewards : [],
+    usesPerDay: +t.usesPerDay || 0, costPerUse: +t.costPerUse || 0, timePerUse: +t.timePerUse || 0,
     celebrated: t.celebrated != null ? t.celebrated : -1,
     createdAt: +t.createdAt || Date.now(),
   };
@@ -304,11 +308,12 @@ function addSlip(t, at = Date.now(), extra = {}) {
 // The full reflection unlocks REFLECT_DELAY later, once the moment has passed.
 const REFLECT_DELAY = 30 * MIN;
 function quickCheckin(t, slip) {
-  const felt = { feltBefore: [...(slip.feltBefore || [])] };
+  const felt = { feltBefore: [...(slip.feltBefore || [])], halt: [...(slip.halt || [])] };
   openSheet(`
     <h3>Quick check-in</h3>
     <p class="sub">−${hrs(slip.hours)} logged. No judgment — just capture this moment while it's fresh.${t.detoxHours ? ` You should feel clear-headed again around <b>${fmtTime(slip.at + t.detoxHours * H)}</b>.` : ''}</p>
     <form id="qc">
+      <div class="field"><span>Were you…</span><div id="qcHalt"></div></div>
       <div class="field"><span>😶 What are you feeling?</span><div class="emo-field" id="qcFelt"></div></div>
       <label class="field"><span>Briefly, why?</span><input name="why" maxlength="200" placeholder="e.g. stressed about work, bored after dinner" value="${esc(slip.note)}" autocomplete="off"></label>
       <div class="stack">
@@ -318,10 +323,11 @@ function quickCheckin(t, slip) {
       <p class="qc-foot">Your full reflection will be ready in 30 minutes, once the moment has passed. <button type="button" class="link-btn" id="qcUndo">Undo this slip</button></p>
     </form>`, sheet => {
     bindEmoField($('#qcFelt', sheet), felt, 'feltBefore', 'What are you feeling?', 'Name the feeling');
+    bindHaltField($('#qcHalt', sheet), felt);
     const f = $('#qc', sheet);
     f.onsubmit = e => {
       e.preventDefault();
-      Object.assign(slip, { feltBefore: felt.feltBefore, note: f.elements.why.value.trim() });
+      Object.assign(slip, { feltBefore: felt.feltBefore, halt: felt.halt, note: f.elements.why.value.trim() });
       save(); closeSheet(true); render();
       toast('Saved. Reflection in 30 min.');
     };
@@ -499,10 +505,13 @@ function renderHome() {
   $('#addBtn').onclick = $('#emptyAdd') ? ($('#emptyAdd').onclick = () => openTimerSheet()) : () => openTimerSheet();
   $('#settingsBtn').onclick = openSettings;
   $('#hideInstall') && ($('#hideInstall').onclick = () => { state.hideInstall = true; save(); render(); });
+  bindHeadsUp(app);
   $$('.timer-card').forEach(el => el.addEventListener('click', e => {
     const id = el.dataset.id, t = getTimer(id);
     if (e.target.closest('[data-slip]')) return chooseSlip(t);
     if (e.target.closest('[data-wave]')) return startWave(t);
+    if (e.target.closest('[data-urge]')) return openUrgeLog(t);
+    if (e.target.closest('[data-plan-hard], [data-headsup]')) return;
     if (e.target.closest('[data-reflect]')) return openSlipSheet(t, pendingReflections(t)[0], 'reflect');
     location.hash = '#/t/' + id;
   }));
@@ -511,6 +520,7 @@ function renderHome() {
 function timerCard(t, now) {
   return `
     <article class="card timer-card" data-id="${t.id}">
+      ${headsUpHTML(t, now)}
       <div class="card-top"><h3>${esc(t.name)}</h3><span class="chip">${penRange(t)} per slip</span></div>
       <div class="clock" data-live="clock" data-id="${t.id}"></div>
       <div class="sub" data-live="sub" data-id="${t.id}"></div>
@@ -522,6 +532,7 @@ function timerCard(t, now) {
         <button class="wave-btn" data-wave>🌊 Ride the wave</button>
         <button class="slip-btn" data-slip>I slipped</button>
       </div>
+      <button class="urge-link" data-urge>✍️ Log an urge</button>
     </article>`;
 }
 
@@ -533,6 +544,7 @@ function renderDetail(t) {
   const events = [
     ...t.slips.map(s => ({ kind: 'slip', at: s.at, s })),
     ...t.waves.map(w => ({ kind: 'wave', at: w.at, w })),
+    ...t.urges.map(u => ({ kind: 'urge', at: u.at, u })),
   ].sort((a, b) => b.at - a.at);
 
   app.innerHTML = `
@@ -552,7 +564,9 @@ function renderDetail(t) {
         <button class="wave-btn lg" id="waveBtn">🌊 Ride the wave</button>
         <button class="slip-btn lg" id="slipBtn">I slipped</button>
       </div>
+      <button class="urge-link" id="urgeBtn">✍️ Log an urge</button>
     </section>
+    ${headsUpHTML(t, now)}
 
     ${(() => {
       const pend = pendingReflections(t, now);
@@ -611,6 +625,9 @@ function renderDetail(t) {
       </div>
     </section>
 
+    ${plansSectionHTML(t)}
+    ${rewardsSectionHTML(t, now)}
+
     <button class="ins-link card" id="insBtn"><span>📊</span><span><b>Insights</b><small>Week-over-week trends, when urges hit, triggers, and whether slips deliver</small></span><span class="chev">›</span></button>
 
     <section class="card">
@@ -622,10 +639,15 @@ function renderDetail(t) {
 
     <section class="card">
       <div class="section-title">History <button class="link-btn" id="pastSlip">+ Log past slip</button></div>
-      ${events.length ? `<ul class="hist">${events.map(ev => ev.kind === 'slip' ? `
+      ${events.length ? `<ul class="hist">${events.map(ev => ev.kind === 'urge' ? `
+        <li data-urge-id="${ev.u.id}">
+          <span class="dot urge"></span>
+          <div><div class="when">${fmtDateTime(ev.at)}</div><div class="note">✍️ Urge noticed${ev.u.intensity ? ` · ${ev.u.intensity}/10` : ''}${ev.u.note ? ` — ${esc(ev.u.note)}` : ''}</div>${ev.u.halt?.length ? `<div class="chips">${haltChips(ev.u.halt)}</div>` : ''}${feelRow(ev.u.emotions)}</div>
+          <span class="pen ok"></span>
+        </li>` : ev.kind === 'slip' ? `
         <li data-slip-id="${ev.s.id}">
           <span class="dot"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}${ev.s.worth ? ` <span class="worth ${ev.s.worth}">${worthLabel(ev.s.worth)}</span>` : ''}</div>${ev.s.note ? `<div class="note">${esc(ev.s.note)}</div>` : ''}${ev.s.expect ? `<div class="note">🔮 ${esc(ev.s.expect)}</div>` : ''}${ev.s.actual ? `<div class="note">📝 ${esc(ev.s.actual)}</div>` : ''}${ev.s.halt?.length ? `<div class="chips">${haltChips(ev.s.halt)}</div>` : ''}${feelRow(ev.s.feltBefore, ev.s.feltAfter)}${ev.s.futureMsg ? `<div class="note">💌 ${esc(ev.s.futureMsg)}</div>` : ''}${ev.s.nextTime ? `<div class="note">➡️ Next time: ${esc(ev.s.nextTime)}</div>` : ''}</div>
           <span class="pen">${ev.s.level ? `<small class="lv-tag">${levelLabel(ev.s.level)}</small>` : ''}−${hrs(ev.s.hours)}</span>
         </li>` : `
         <li data-wave-id="${ev.w.id}">
@@ -639,6 +661,9 @@ function renderDetail(t) {
   $('#editBtn').onclick = () => openTimerSheet(t);
   $('#insBtn').onclick = $('#insHdr').onclick = () => { location.hash = `#/t/${t.id}/insights`; };
   $('#slipBtn').onclick = () => chooseSlip(t);
+  $('#urgeBtn').onclick = () => openUrgeLog(t);
+  bindHeadsUp(app); bindPlansSection(t); bindRewards(t);
+  $$('[data-urge-id]').forEach(li => li.onclick = () => openUrgeEntrySheet(t, t.urges.find(u => u.id === li.dataset.urgeId)));
   $('#waveBtn').onclick = () => startWave(t);
   $('#pastSlip').onclick = () => openSlipSheet(t, null);
   $('#reflectBtn') && ($('#reflectBtn').onclick = () => openSlipSheet(t, pendingReflections(t)[0], 'reflect'));
@@ -702,6 +727,13 @@ function tick() {
   });
   // Re-render when a slip's reflection becomes due, so its prompt appears on its own.
   const due = state.timers.reduce((a, t) => a + pendingReflections(t, now).length, 0);
+  // Refresh when a heads-up window starts or ends (checked every 30 s).
+  if (!tick.huAt || now - tick.huAt > 30 * SEC) {
+    tick.huAt = now;
+    const hu = state.timers.map(t => headsUpHTML(t, now)).join('|');
+    if (tick.hu != null && hu !== tick.hu && !$('.backdrop') && !$('#wave') && app.dataset.view !== 'insights') rerenderSoon();
+    tick.hu = hu;
+  }
   const prevDue = tick.due;
   tick.due = due;
   if (prevDue != null && due > prevDue && !$('.backdrop') && !$('#wave') && app.dataset.view !== 'insights') rerenderSoon();
@@ -711,6 +743,7 @@ function tick() {
 
 function checkCelebrations(now) {
   if ($('.celebrate')) return;
+  if (checkRewardUnlocks(now)) return;
   for (const t of state.timers) {
     const r = milestoneInfo(netAt(t, now)).reached;
     if (r > t.celebrated) {
@@ -724,7 +757,7 @@ function checkCelebrations(now) {
 function celebrate(t, m) {
   const el = document.createElement('div');
   el.className = 'celebrate';
-  el.innerHTML = `<div class="box"><div class="e">${m.e}</div><h3>${m.label}!</h3><p>${esc(t.name)} — ${m.label} of net progress. That's real.</p><button class="btn block">Keep going</button></div>`;
+  el.innerHTML = `<div class="box"><div class="e">${m.e}</div><h3>${m.label}!</h3><p>${m.text ? esc(m.text) : `${esc(t.name)} — ${m.label} of net progress. That's real.`}</p><button class="btn block">Keep going</button></div>`;
   el.onclick = e => { if (e.target === el || e.target.closest('button')) el.remove(); };
   document.body.appendChild(el);
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -929,6 +962,7 @@ function openDaySheet(t, day) {
         <div class="de-head"><span class="dot"></span><b>Slip · ${fmtTime(s.at)}${s.level ? ` · ${levelLabel(s.level)}` : ''}</b><span class="pen">−${hrs(s.hours)}</span></div>
         ${s.note ? `<div class="de-row"><span>Trigger</span>${esc(s.note)}</div>` : ''}
         ${s.decision ? `<div class="de-row"><span>🧭 The decision</span>${esc(s.decision)}</div>` : ''}
+        ${s.halt?.length ? `<div class="de-row"><span>HALT</span><div class="chips">${haltChips(s.halt)}</div></div>` : ''}
         ${s.feltBefore?.length ? `<div class="de-row"><span>😶 Feeling before</span><div class="chips">${emoChips(s.feltBefore)}</div></div>` : ''}
         <div class="de-row"><span>🔮 Expected</span>${s.expect ? esc(s.expect) : '<em>—</em>'}</div>
         <div class="de-row"><span>📝 Actually</span>${s.actual ? esc(s.actual) : '<em>not reflected yet</em>'}</div>
@@ -1073,6 +1107,13 @@ function openTimerSheet(t) {
       <div class="field"><span>What counts as each level? <em class="muted">(optional, but decide now while you're clear-headed)</em></span>
         ${LEVELS.map(([k, label, e]) => `<label class="pen-desc-row"><small>${e} ${label}</small><input name="desc_${k}" maxlength="80" placeholder="e.g. ${{ low: 'under 15 minutes', med: 'up to an hour', high: 'lost the evening' }[k]}" value="${esc(d.penDesc[k])}"></label>`).join('')}
       </div>
+      <div class="field"><span>💰 Savings (optional) — your habit before you quit</span>
+        <div class="pen-grid">
+          <label class="pen-cell"><small>Uses per day</small><input name="usesPerDay" type="number" inputmode="decimal" min="0" step="0.1" value="${d.usesPerDay || ''}" placeholder="0"></label>
+          <label class="pen-cell"><small>$ per use</small><input name="costPerUse" type="number" inputmode="decimal" min="0" step="0.01" value="${d.costPerUse || ''}" placeholder="0"></label>
+          <label class="pen-cell"><small>Hours per use</small><input name="timePerUse" type="number" inputmode="decimal" min="0" step="0.25" value="${d.timePerUse || ''}" placeholder="0"></label>
+        </div>
+        <div class="hint">Used to estimate money saved and time reclaimed. Leave blank to skip.</div></div>
       <label class="field"><span>🫧 Time until clear-headed after using (hours)</span><input name="detox" type="number" inputmode="decimal" min="0" max="168" step="0.5" required value="${d.detoxHours ?? 4}">
         <div class="hint">Shows a countdown after each slip that restarts if you use again. Set to 0 to turn it off.</div></label>
       <label class="field"><span>🌊 Ride-the-wave length (minutes)</span><input name="wave" type="number" inputmode="numeric" min="1" max="120" required value="${d.waveMin}">
@@ -1106,6 +1147,7 @@ function openTimerSheet(t) {
         penDesc: Object.fromEntries(ALL_LEVELS.map(([k]) => [k, f.elements['desc_' + k].value.trim()])),
         waveMin: Math.max(1, Math.round(+f.elements.wave.value || 10)),
         detoxHours: Math.max(0, +f.elements.detox.value || 0),
+        usesPerDay: Math.max(0, +f.elements.usesPerDay.value || 0), costPerUse: Math.max(0, +f.elements.costPerUse.value || 0), timePerUse: Math.max(0, +f.elements.timePerUse.value || 0),
         message: f.elements.msg.value.trim(),
         alts: f.elements.alts.value.split('\n').map(s => s.trim()).filter(Boolean),
         favAlts: (t?.favAlts || []).filter(a => f.elements.alts.value.split('\n').map(s => s.trim()).includes(a)),
@@ -1158,6 +1200,7 @@ function openSlipSheet(t, slip, focus) {
           <p>Say it plainly, without judgment: it was a choice. Owning it as a choice is exactly what gives you the power to make a different one.</p></div></div>
         ${d.note ? `<div class="expect"><span>In the moment you said:</span> ${esc(d.note)}</div>` : ''}
         <label class="field"><span>The decision</span><textarea name="decision" maxlength="1000" placeholder="I chose to use again because…">${esc(d.decision || '')}</textarea></label>
+        <div class="field"><span>Was I…</span><div id="slipHalt"></div></div>
         <div class="field"><span>😶 How I was feeling beforehand</span><div class="emo-field" id="feltBefore"></div></div>
       </section>
       <section class="rstep">
@@ -1182,7 +1225,10 @@ function openSlipSheet(t, slip, focus) {
           <p>Right now you know exactly how this feels. Write it down for the version of you who'll face the next urge — it'll sit at the top of your home screen.</p></div></div>
         <label class="field"><span>💌 A message to future me</span><textarea name="futureMsg" maxlength="1000" rows="4" placeholder="e.g. Remember lying awake at 3am feeling hollow. It's never worth it.">${esc(d.futureMsg || '')}</textarea></label>
         <label class="pin-check"><input type="checkbox" name="pinIt" ${slip && isPinned(t, slip) ? 'checked disabled' : ''}> 📌 Also pin it to <b>Why I quit</b></label>
-        <label class="field"><span>➡️ Next time, I will…</span><textarea name="nextTime" maxlength="1000" placeholder="Next time the urge hits, I'll…">${esc(d.nextTime || '')}</textarea></label>
+        <div class="field"><span>🧭 Your if-then plan for next time</span>
+          <div class="ifthen"><b>If</b><input name="ifText" maxlength="140" placeholder="I'm bored on a Sunday night" value="${esc(d.ifText || '')}"></div>
+          <div class="ifthen"><b>then I will</b><input name="thenText" maxlength="140" placeholder="text Sam and go for a walk" value="${esc(d.thenText || (!d.ifText ? d.nextTime || '' : ''))}"></div>
+          <label class="pin-check" style="margin:10px 0 0"><input type="checkbox" name="savePlan" ${d.planId ? 'checked disabled' : 'checked'}> Save to my plans ${d.planId ? '(saved)' : '— add a time window there to get heads-ups'}</label></div>
       </section>
       <div class="stack">
         <button class="btn block" type="submit">Save</button>
@@ -1197,7 +1243,8 @@ function openSlipSheet(t, slip, focus) {
       level = b.dataset.v; f.elements.hours.value = t.pen[level];
       $$('#lvl button', sheet).forEach(x => x.classList.toggle('on', x === b));
     };
-    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])] };
+    const felt = { feltBefore: [...(d.feltBefore || [])], feltAfter: [...(d.feltAfter || [])], halt: [...(d.halt || [])] };
+    bindHaltField($('#slipHalt', sheet), felt);
     bindEmoField($('#feltBefore', sheet), felt, 'feltBefore', 'How were you feeling?', 'Add feelings');
     bindEmoField($('#feltAfter', sheet), felt, 'feltAfter', 'How do you feel now?', 'Add feelings');
     $('#worth', sheet).onclick = e => {
@@ -1220,11 +1267,18 @@ function openSlipSheet(t, slip, focus) {
       const vals = {
         at: Math.min(at, Date.now()), hours: Math.max(0, +f.elements.hours.value || 0), note: f.elements.note.value.trim(),
         expect: f.elements.expect.value.trim(), actual: f.elements.actual.value.trim(), worth, ...felt, level,
-        decision: f.elements.decision.value.trim(), change: f.elements.change.value.trim(), impact, nextTime: f.elements.nextTime.value.trim(), futureMsg: f.elements.futureMsg.value.trim(),
+        decision: f.elements.decision.value.trim(), change: f.elements.change.value.trim(), impact, futureMsg: f.elements.futureMsg.value.trim(),
+        ifText: f.elements.ifText.value.trim().replace(/^if\s+/i, ''), thenText: f.elements.thenText.value.trim().replace(/^(then\s+)?(i will|i'll)\s+/i, ''),
       };
+      vals.nextTime = vals.ifText && vals.thenText ? `If ${vals.ifText}, then I will ${vals.thenText}.` : vals.thenText;
       let target = slip;
       if (isNew) { target = { id: uid(), ...vals }; t.slips.push(target); } else Object.assign(slip, vals);
       if (f.elements.pinIt.checked && !f.elements.pinIt.disabled && target.futureMsg) t.pinned.unshift({ id: uid(), text: target.futureMsg, at: target.at, slipId: target.id });
+      if (f.elements.savePlan.checked && !f.elements.savePlan.disabled && target.ifText && target.thenText) {
+        const plan = { id: uid(), at: Date.now(), ifText: target.ifText, thenText: target.thenText, days: [], from: null, to: null };
+        t.plans.push(plan); target.planId = plan.id;
+        toast('🧭 Saved to your plans — add a time window for heads-ups');
+      }
       // keep a pinned copy in sync if the message was edited
       t.pinned.forEach(p => { if (p.slipId === target.id && target.futureMsg) p.text = target.futureMsg; });
       save(); closeSheet(); render();
@@ -1478,11 +1532,12 @@ function renderWave() {
       ${(() => {
         const msg = sortedSlips(t).reverse().find(s => s.futureMsg), dec = sortedSlips(t).reverse().find(s => s.nextTime);
         return `${msg ? `<div class="card future-bubble in-wave"><div class="fb-label">💌 From you, after your slip on ${fmtDate(msg.at)}</div><div class="fb-text">${esc(msg.futureMsg)}</div></div>` : ''}
-          ${dec ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(dec.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(dec.at)}</div></div>` : ''}
+          ${t.plans.length ? plansForWaveHTML(t) : dec ? `<div class="card last-decision"><div class="section-title">What you decided last time</div><div class="msg">${esc(dec.nextTime)}</div><div class="muted small">After your slip on ${fmtDate(dec.at)}</div></div>` : ''}
           ${t.pinned.length ? `<div class="card why-in-wave"><div class="section-title">📌 Why you quit</div>${t.pinned.map(p => `<div class="why-entry">${p.img ? `<div class="why-photo"><img data-img="${p.img}" alt=""></div>` : ''}${p.text ? `<div class="why-text">${esc(p.text)}</div>` : ''}</div>`).join('')}</div>` : ''}`;
       })()}
       <p class="lead">An urge is a wave. It rises, peaks, and passes — you don't have to act on it. Let's ride this one out.</p>
       <div class="card"><div class="section-title">How strong is the urge right now?</div>${ratingHTML('before', w.before)}</div>
+      <div class="card"><div class="section-title">HALT check — are you…</div><div id="wHalt"></div></div>
       <div class="card"><div class="section-title">What are you feeling underneath it?</div><div class="emo-field" id="wEmo"></div></div>
       <div class="card"><div class="section-title">What will you do instead?</div><div id="wActs"></div></div>
       <div class="card"><div class="section-title">Ride it for</div>
@@ -1491,10 +1546,12 @@ function renderWave() {
     </div>`;
     bindEmoField($('#wEmo', el), w, 'emotions', 'What are you feeling?', 'Name the feeling');
     $('#wEmo', el).addEventListener('emochange', save);
+    bindHaltField($('#wHalt', el), w, 'halt', save);
     $('#wMin', el).onclick = e => { const b = e.target.closest('button'); if (!b) return; w.minutes = +b.dataset.v; save(); renderWave(); };
     $('#wStart', el).onclick = () => {
       try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) { /* no audio */ }
       w.phase = 'run'; w.startAt = Date.now(); w.endAt = w.startAt + w.minutes * MIN;
+      w.ratings = w.before ? [{ m: 0, v: w.before }] : []; w.lastRateAt = w.startAt;
       save(); keepAwake(true); renderWave();
     };
   } else if (w.phase === 'run') {
@@ -1504,6 +1561,8 @@ function renderWave() {
         <div class="breath"><div class="bubble"></div></div>
         <div class="ring-center"><div class="count num" id="wCount"></div><div class="breath-txt" id="wBreath"></div></div>
       </div>
+      <div class="card rate-card" id="wRateCard"><div class="section-title">How strong is it now? <span class="muted" id="wRateHint"></span></div>${ratingHTML('now', null)}
+        <div class="muted small">Tap every couple of minutes — you'll see your wave rise and fall.</div></div>
       ${w.emotions?.length ? `<div class="emo-running">Feeling ${emoChips(w.emotions)} — that makes sense. Let it be there.</div>` : ''}
       ${t.message ? msgCard(t.message, 'Note to self') : ''}
       <div class="card tip-card"><div class="section-title">Try this</div><div id="wTip" class="wtip"></div></div>
@@ -1519,10 +1578,10 @@ function renderWave() {
     $('#wExpect', el).oninput = e => { w.expect = e.target.value; save(); };
     $('#wChoose', el).onclick = () => {
       const mins = Math.max(1, Math.round((Date.now() - w.startAt) / MIN));
-      const extra = { expect: w.expect || '', feltBefore: w.emotions || [] };
+      const extra = { expect: w.expect || '', feltBefore: w.emotions || [], halt: w.halt || [] };
       // Only end the wave once a level is picked; closing the sheet keeps you riding.
       chooseSlip(t, extra, () => {
-        t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: null, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], outcome: 'slipped' });
+        t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: null, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], halt: w.halt || [], ratings: w.ratings || [], outcome: 'slipped' });
         endWave();
       });
     };
@@ -1533,6 +1592,8 @@ function renderWave() {
       <div class="done-hero"><div class="e">🌊</div><h3>You stayed with it for ${mins} minute${mins === 1 ? '' : 's'}.</h3>
       <p class="sub">That takes real strength. How strong is the urge now?</p></div>
       <div class="card">${w.before ? `<div class="section-title">Before: ${w.before}/10 · Now:</div>` : ''}${ratingHTML('after', w.after)}</div>
+      <div class="card" id="wCurveCard" ${(w.ratings || []).length >= 2 ? '' : 'hidden'}><div class="section-title">Your wave</div><div id="wCurve">${waveCurveSVG(w.ratings)}</div>
+        <div class="muted small">It rose, peaked, and came down — while you stayed with it.</div></div>
       <div class="stack">
         <button class="btn block big-btn" id="wWin">I rode it out 🌊</button>
         <button class="btn block secondary" id="wMore">Still strong — 5 more minutes</button>
@@ -1540,11 +1601,13 @@ function renderWave() {
       </div>
     </div>`;
     const log = outcome => {
-      t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: w.after, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], outcome });
+      const ratings = [...(w.ratings || [])];
+      if (w.after) ratings.push({ m: (Date.now() - w.startAt) / MIN, v: w.after });
+      t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: w.after, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], halt: w.halt || [], ratings, outcome });
     };
     $('#wWin', el).onclick = () => { log('rode'); endWave(); render(); toast('Wave ridden. That counts. 💪'); };
     $('#wMore', el).onclick = () => { w.phase = 'run'; w.endAt = Date.now() + 5 * MIN; delete w.endedAt; save(); keepAwake(true); renderWave(); };
-    $('#wSlip', el).onclick = () => { const extra = { expect: w.expect || '', feltBefore: w.emotions || [] }; chooseSlip(t, extra, () => { log('slipped'); endWave(); }); };
+    $('#wSlip', el).onclick = () => { const extra = { expect: w.expect || '', feltBefore: w.emotions || [], halt: w.halt || [] }; chooseSlip(t, extra, () => { log('slipped'); endWave(); }); };
   }
 
   hydrateImages(el);
@@ -1553,8 +1616,19 @@ function renderWave() {
   if (acts) { w.done = w.done || []; mountActivities(acts, t, w); }
   $$('[data-rating]', el).forEach(r => r.onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
+    if (r.dataset.rating === 'now') {   // mid-wave check-in: record a point on the curve
+      w.ratings = [...(w.ratings || []), { m: (Date.now() - w.startAt) / MIN, v: +b.dataset.v }];
+      w.lastRateAt = Date.now(); save();
+      $$('button', r).forEach(x => x.classList.toggle('on', x === b));
+      $('#wRateCard', el).classList.remove('due');
+      return;
+    }
     w[r.dataset.rating] = +b.dataset.v; save();
     $$('button', r).forEach(x => x.classList.toggle('on', x === b));
+    if (r.dataset.rating === 'after' && $('#wCurve', el)) {
+      const pts = [...(w.ratings || []), { m: ((w.endedAt || Date.now()) - w.startAt) / MIN, v: w.after }];
+      $('#wCurve', el).innerHTML = waveCurveSVG(pts); $('#wCurveCard', el).hidden = pts.length < 2;
+    }
   });
   $('#wClose', el).onclick = () => {
     if (w.phase === 'run' && !confirm('Stop riding this wave? It won’t be logged.')) return;
@@ -1582,6 +1656,12 @@ function tickWave(now) {
   const tipEl = $('#wTip', el);
   const tipTxt = WAVE_TIPS[Math.floor((now - w.startAt) / (40 * SEC)) % WAVE_TIPS.length];
   if (tipEl && tipEl.textContent !== tipTxt) tipEl.textContent = tipTxt;
+  const rc = $('#wRateCard', el);
+  if (rc) {
+    const due = now - (w.lastRateAt || w.startAt) >= RATE_EVERY;
+    rc.classList.toggle('due', due);
+    $('#wRateHint', el).textContent = due ? '· time to check in' : '';
+  }
   if (left <= 0) { w.phase = 'done'; save(); keepAwake(false); chime(); renderWave(); }
 }
 

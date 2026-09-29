@@ -34,6 +34,7 @@ function urgeEvents(t) {
   return [
     ...t.waves.map(w => ({ at: w.at - (w.minutes || 0) * MIN, slip: w.outcome === 'slipped' })),
     ...t.slips.filter(s => !waveSlipEnds.some(x => Math.abs(x - s.at) < 5 * MIN)).map(s => ({ at: s.at, slip: true })),
+    ...(t.urges || []).map(u => ({ at: u.at, slip: false })),
   ];
 }
 
@@ -170,6 +171,14 @@ function renderInsights(t) {
   const rodeFeel = tally(t.waves.filter(w => w.outcome === 'rode').map(w => w.emotions || []));
   const quadCount = q => t.slips.flatMap(s => s.feltBefore || []).filter(w => EMOTION_BY_WORD[w]?.quad === q).length;
 
+  // HALT: share of slips / all urges with each state
+  const slipHalts = t.slips.filter(s => s.halt?.length);
+  const urgeHalts = [...t.slips, ...t.waves, ...(t.urges || [])].filter(x => x.halt?.length);
+  const haltRows = HALT.map(([k, l, e]) => ({ k, l, e, slips: slipHalts.filter(s => s.halt.includes(k)).length, all: urgeHalts.filter(x => x.halt.includes(k)).length }))
+    .filter(r => r.all).sort((a, b) => b.slips - a.slips || b.all - a.all);
+  const topHalt = haltRows[0];
+  const curve = urgeCurve(t);
+
   // what works
   const works = tally(t.waves.filter(w => w.outcome === 'rode').map(w => w.done || []));
   const worksMax = works[0]?.[1] || 1;
@@ -220,6 +229,13 @@ function renderInsights(t) {
     </section>
 
     <section class="card">
+      <div class="section-title">Your urge curve</div>
+      ${curve ? `<p class="ins-head">Across ${curve.n} waves you rode out, urges peaked around <b>minute ${curve.peak.m}</b> (avg ${curve.peak.v.toFixed(1)}/10)${curve.below ? ` and dropped below 5 by <b>minute ${curve.below.m}</b>` : ''}. The wave passes.</p>
+        <div class="ins-chart">${waveCurveSVG(curve.pts.map(p => ({ m: p.m, v: +p.v.toFixed(1) })), { w: 340, h: 150 })}</div>`
+        : empty('Rate the urge a few times during your next waves (“How strong is it now?”) — after two waves, your typical curve shows up here.')}
+    </section>
+
+    <section class="card">
       <div class="section-title">Time kept per week</div>
       <p class="ins-head">The share of each week's clean time you kept after penalties.</p>
       ${barChart({
@@ -256,6 +272,14 @@ function renderInsights(t) {
       ${before.length ? `<div class="share-wrap">${shareBar(['red', 'yellow', 'blue', 'green'].map(q => ({ label: QUADRANTS[q].label, n: quadCount(q), color: `var(--q-${q})`, ink: `var(--q-${q}-ink)` })))}<div class="tip"></div></div>
         ${legend(['red', 'yellow', 'blue', 'green'].filter(q => quadCount(q)).map(q => [QUADRANTS[q].label, `var(--q-${q})`]))}` : ''}
       <div class="ins-sub" style="margin-top:16px">Feelings in waves you rode out</div>${chipsWithCounts(rodeFeel)}
+    </section>
+
+    <section class="card">
+      <div class="section-title">HALT check</div>
+      ${haltRows.length ? `<p class="ins-head">${topHalt.slips ? `<b>${pct(topHalt.slips, slipHalts.length)}%</b> of your slips (with a HALT check) happened when you were <b>${topHalt.l.toLowerCase()}</b>. ${haltInfo(topHalt.k)[3]}` : 'How often each state shows up with your urges:'}</p>
+        <ul class="hbar-list">${haltRows.map(r => `<li><span class="hb-l">${r.e} ${r.l}</span><span class="hb-track"><i style="width:${pct(r.slips || r.all, slipHalts.length || urgeHalts.length)}%;background:var(${r.slips ? '--danger' : '--wave'})"></i></span><span class="hb-n">${r.slips ? pct(r.slips, slipHalts.length) + '%' : r.all}</span></li>`).join('')}</ul>
+        <div class="muted small">${slipHalts.length ? `% of ${slipHalts.length} slips` : `count of ${urgeHalts.length} urges`} with a HALT check.</div>`
+        : empty('Tap HALT (Hungry, Angry, Lonely, Tired, Bored, Stressed) when you log an urge or slip — patterns show up here.')}
     </section>
 
     <section class="card">
