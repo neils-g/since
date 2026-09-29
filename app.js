@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.17';
+const APP_VERSION = '2.18';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -233,6 +233,12 @@ function openSheet(html, mount) {
   });
   mount?.(sheet);
 }
+// Make every textarea.autogrow under root grow with its content.
+function autogrow(root) {
+  const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
+  $$('textarea.autogrow', root).forEach(ta => { grow(ta); ta.addEventListener('input', () => grow(ta)); });
+}
+
 function closeSheet(animate) {
   const bd = $('.backdrop'); if (!bd) return;
   document.body.classList.remove('sheet-open');
@@ -1133,9 +1139,7 @@ function openTimerSheet(t) {
       f.elements[q.dataset.for].value = b.dataset.v;
       $$('button', q).forEach(x => x.classList.toggle('on', x === b));
     }));
-    // Let the message box grow with its content
-    const grow = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
-    $$('.autogrow', sheet).forEach(ta => { grow(ta); ta.addEventListener('input', () => grow(ta)); });
+    autogrow(sheet); // let the message box grow with its content
     if (isNew) setTimeout(() => f.elements.name.focus(), 250);
     f.onsubmit = e => {
       e.preventDefault();
@@ -1291,16 +1295,44 @@ function openSlipSheet(t, slip, focus) {
   });
 }
 
+// A past wave: summary + curve, with the writing and check-ins editable.
 function openWaveEntrySheet(t, w) {
+  const d = { emotions: [...(w.emotions || [])], halt: [...(w.halt || [])], before: w.before, after: w.after };
   openSheet(`
-    <h3>${w.outcome === 'rode' ? '🌊 Wave ridden' : 'Wave'}</h3>
-    <p class="sub">${fmtDateTime(w.at)} · ${w.minutes} min${w.overtimeMin ? ` (+${fmtShort(w.overtimeMin * MIN)} absorbed after)` : ''}${w.before ? ` · urge ${w.before} → ${w.after || '?'}` : ''}</p>
+    <h3>${w.outcome === 'rode' ? '🌊 Wave ridden' : 'Wave → slipped'}</h3>
+    <p class="sub">${fmtDateTime(w.at)} · ${w.minutes} min${w.overtimeMin ? ` (+${fmtShort(w.overtimeMin * MIN)} absorbed after)` : ''}</p>
     ${w.done?.length ? `<p class="sub">Did: ${w.done.map(esc).join(', ')}</p>` : ''}
     ${w.ratings?.length >= 2 ? waveCurveSVG(w.ratings) : ''}
-    ${w.note ? `<div class="expect"><span>💬 Your note</span>${esc(w.note)}</div>` : ''}
-    <div style="height:12px"></div>
-    <button class="btn danger block" id="delWave">Delete entry</button>`, sheet => {
-    $('#delWave', sheet).onclick = () => { t.waves = t.waves.filter(x => x !== w); save(); closeSheet(); render(); };
+    <form id="wef">
+      <label class="field"><span>💬 Notes</span><textarea name="note" class="autogrow journal" maxlength="5000" rows="4" placeholder="What you did, how you felt, what helped — add context any time.">${esc(w.note || '')}</textarea></label>
+      <label class="field"><span>🔮 What I thought would happen if I did it</span><textarea name="expect" class="autogrow" maxlength="2000" rows="2">${esc(w.expect || '')}</textarea></label>
+      <div class="field"><span>Urge before</span>${ratingHTML('before', w.before)}</div>
+      <div class="field"><span>Urge after</span>${ratingHTML('after', w.after)}</div>
+      <div class="field"><span>Were you…</span><div id="weHalt"></div></div>
+      <div class="field"><span>😶 Feelings</span><div class="emo-field" id="weEmo"></div></div>
+      <div class="stack">
+        <button class="btn block" type="submit">Save</button>
+        <button class="btn danger block" type="button" id="delWave">Delete entry</button>
+      </div>
+    </form>`, sheet => {
+    bindHaltField($('#weHalt', sheet), d);
+    bindEmoField($('#weEmo', sheet), d, 'emotions', 'What were you feeling?', 'Add feelings');
+    $$('[data-rating]', sheet).forEach(r => r.onclick = e => {
+      const b = e.target.closest('button'); if (!b) return;
+      const k = r.dataset.rating; d[k] = d[k] === +b.dataset.v ? null : +b.dataset.v;
+      $$('button', r).forEach(x => x.classList.toggle('on', +x.dataset.v === d[k]));
+    });
+    autogrow(sheet);
+    const f = $('#wef', sheet);
+    f.onsubmit = e => {
+      e.preventDefault();
+      Object.assign(w, { ...d, note: f.elements.note.value.trim(), expect: f.elements.expect.value.trim() });
+      save(); closeSheet(true); render(); toast('Saved');
+    };
+    $('#delWave', sheet).onclick = () => {
+      const i = t.waves.indexOf(w); t.waves.splice(i, 1); save(); closeSheet(true); render();
+      toast('Wave deleted', [{ label: 'Undo', fn: () => { t.waves.splice(i, 0, w); save(); render(); } }]);
+    };
   });
 }
 
@@ -1600,7 +1632,7 @@ function renderWave() {
       <div class="card" id="wCurveCard" ${(w.ratings || []).length >= 2 ? '' : 'hidden'}><div class="section-title">Your wave</div><div id="wCurve">${waveCurveSVG(w.ratings)}</div>
         <div class="muted small">It rose, peaked, and came down — while you stayed with it.</div></div>
       <div class="card"><div class="section-title">💬 Anything to note?</div>
-        <textarea id="wNote" class="wave-note" maxlength="2000" rows="3" placeholder="What you did, how you feel now, what helped — anything.">${esc(w.note || '')}</textarea></div>
+        <textarea id="wNote" class="wave-note autogrow journal" maxlength="5000" rows="3" placeholder="What you did, how you feel now, what helped — anything.">${esc(w.note || '')}</textarea></div>
       <div class="stack">
         <button class="btn block big-btn" id="wWin">I rode it out 🌊</button>
         <button class="btn block secondary" id="wMore">Still strong — 5 more minutes</button>
@@ -1608,6 +1640,7 @@ function renderWave() {
       </div>
     </div>`;
     $('#wNote', el).oninput = e => { w.note = e.target.value; save(); };
+    autogrow(el);
     const log = outcome => {
       const end = w.endedAt || w.endAt, ratings = [...(w.ratings || [])];
       if (w.after) ratings.push({ m: (end - w.startAt) / MIN, v: w.after });

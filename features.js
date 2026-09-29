@@ -208,7 +208,7 @@ function openUrgeLog(t) {
       <div class="field"><span>How strong is it?</span>${ratingHTML('intensity', null)}</div>
       <div class="field"><span>Are you…</span><div id="uHalt"></div></div>
       <div class="field"><span>😶 Feelings (optional)</span><div class="emo-field" id="uEmo"></div></div>
-      <label class="field"><span>What set it off? (optional)</span><input name="note" maxlength="200" placeholder="e.g. saw my phone on the pillow" autocomplete="off"></label>
+      <label class="field"><span>📓 What's going on? (optional)</span><textarea name="note" class="autogrow journal" maxlength="5000" rows="4" placeholder="What set it off, what's on your mind, how your body feels — write as much as you want."></textarea></label>
       <div class="stack">
         <button class="btn block" type="submit">Log it</button>
         <button class="btn secondary block" type="button" id="uWave">🌊 Ride this one out instead</button>
@@ -221,6 +221,7 @@ function openUrgeLog(t) {
       u.intensity = +b.dataset.v; $$('[data-rating] button', sheet).forEach(x => x.classList.toggle('on', x === b));
     };
     const f = $('#uf', sheet);
+    autogrow(sheet);
     f.onsubmit = e => {
       e.preventDefault();
       t.urges.push({ id: uid(), at: Date.now(), intensity: u.intensity, halt: u.halt, emotions: u.emotions, note: f.elements.note.value.trim() });
@@ -235,15 +236,41 @@ function openUrgeLog(t) {
     };
   });
 }
+// Edit a past urge log: time, intensity, HALT, feelings, journal.
 function openUrgeEntrySheet(t, u) {
+  const d = { intensity: u.intensity, halt: [...(u.halt || [])], emotions: [...(u.emotions || [])] };
   openSheet(`
     <h3>✍️ Urge</h3>
-    <p class="sub">${fmtDateTime(u.at)}${u.intensity ? ` · ${u.intensity}/10` : ''}</p>
-    ${u.halt?.length ? `<div class="chips">${haltChips(u.halt)}</div>` : ''}
-    ${u.emotions?.length ? `<div class="chips">${emoChips(u.emotions)}</div>` : ''}
-    ${u.note ? `<p>${esc(u.note)}</p>` : ''}
-    <button class="btn danger block" id="delUrge" style="margin-top:14px">Delete entry</button>`, sheet => {
-    $('#delUrge', sheet).onclick = () => { t.urges = t.urges.filter(x => x !== u); save(); closeSheet(true); render(); };
+    <form id="uef">
+      <label class="field"><span>When</span><input name="at" type="datetime-local" required value="${toLocalInput(u.at)}" max="${toLocalInput(Date.now())}"></label>
+      <div class="field"><span>How strong was it?</span>${ratingHTML('intensity', u.intensity)}</div>
+      <div class="field"><span>Were you…</span><div id="ueHalt"></div></div>
+      <div class="field"><span>😶 Feelings</span><div class="emo-field" id="ueEmo"></div></div>
+      <label class="field"><span>📓 Journal</span><textarea name="note" class="autogrow journal" maxlength="5000" rows="4" placeholder="Add context — what was happening, what you did next, what you'd want to remember.">${esc(u.note || '')}</textarea></label>
+      <div class="stack">
+        <button class="btn block" type="submit">Save</button>
+        <button class="btn danger block" type="button" id="delUrge">Delete entry</button>
+      </div>
+    </form>`, sheet => {
+    bindHaltField($('#ueHalt', sheet), d);
+    bindEmoField($('#ueEmo', sheet), d, 'emotions', 'What were you feeling?', 'Add feelings');
+    $('[data-rating]', sheet).onclick = e => {
+      const b = e.target.closest('button'); if (!b) return;
+      d.intensity = d.intensity === +b.dataset.v ? null : +b.dataset.v;
+      $$('[data-rating] button', sheet).forEach(x => x.classList.toggle('on', +x.dataset.v === d.intensity));
+    };
+    autogrow(sheet);
+    const f = $('#uef', sheet);
+    f.onsubmit = e => {
+      e.preventDefault();
+      const at = fromLocalInput(f.elements.at.value);
+      Object.assign(u, { ...d, at: isFinite(at) ? Math.min(at, Date.now()) : u.at, note: f.elements.note.value.trim() });
+      save(); closeSheet(true); render(); toast('Saved');
+    };
+    $('#delUrge', sheet).onclick = () => {
+      const i = t.urges.indexOf(u); t.urges.splice(i, 1); save(); closeSheet(true); render();
+      toast('Urge deleted', [{ label: 'Undo', fn: () => { t.urges.splice(i, 0, u); save(); render(); } }]);
+    };
   });
 }
 
