@@ -2,7 +2,7 @@
 
 /* ───────────── constants ───────────── */
 const KEY = 'since.v1';
-const APP_VERSION = '2.16';
+const APP_VERSION = '2.17';
 const SEC = 1000, MIN = 60 * SEC, H = 60 * MIN, D = 24 * H;
 
 const MILESTONES = [
@@ -652,7 +652,7 @@ function renderDetail(t) {
         </li>` : `
         <li data-wave-id="${ev.w.id}">
           <span class="dot ${ev.w.outcome === 'rode' ? 'wave' : ''}"></span>
-          <div><div class="when">${fmtDateTime(ev.at)}</div><div class="note">${ev.w.outcome === 'rode' ? '🌊 Rode out' : 'Wave → slipped'} a ${ev.w.minutes}-min wave${ev.w.before ? ` · urge ${ev.w.before}${ev.w.after ? ` → ${ev.w.after}` : ''}` : ''}</div>${feelRow(ev.w.emotions)}</div>
+          <div><div class="when">${fmtDateTime(ev.at)}</div><div class="note">${ev.w.outcome === 'rode' ? '🌊 Rode out' : 'Wave → slipped'} a ${ev.w.minutes}-min wave${ev.w.overtimeMin ? ` · +${fmtShort(ev.w.overtimeMin * MIN)} absorbed` : ''}${ev.w.before ? ` · urge ${ev.w.before}${ev.w.after ? ` → ${ev.w.after}` : ''}` : ''}</div>${ev.w.note ? `<div class="note">💬 ${esc(ev.w.note)}</div>` : ''}${feelRow(ev.w.emotions)}</div>
           <span class="pen ok">${ev.w.outcome === 'rode' ? 'win' : ''}</span>
         </li>`).join('')}</ul>` : `<div class="empty-hist">No slips yet. Keep it going.</div>`}
     </section>
@@ -976,7 +976,8 @@ function openDaySheet(t, day) {
     ${waves.map(w => `
       <div class="day-entry wave">
         <div class="de-head"><span class="dot wave"></span><b>${w.outcome === 'rode' ? '🌊 Rode out a wave' : 'Wave → slipped'} · ${fmtTime(w.at)}</b></div>
-        <div class="de-row"><span>Length</span>${w.minutes} min${w.before ? ` · urge ${w.before} → ${w.after || '?'}` : ''}</div>
+        <div class="de-row"><span>Length</span>${w.minutes} min${w.overtimeMin ? ` · +${fmtShort(w.overtimeMin * MIN)} absorbed after` : ''}${w.before ? ` · urge ${w.before} → ${w.after || '?'}` : ''}</div>
+        ${w.note ? `<div class="de-row"><span>💬 Note</span>${esc(w.note)}</div>` : ''}
         ${w.emotions?.length ? `<div class="de-row"><span>Feeling</span><div class="chips">${emoChips(w.emotions)}</div></div>` : ''}
         ${w.expect ? `<div class="de-row"><span>🔮 Predicted</span>${esc(w.expect)}</div>` : ''}
         ${w.done?.length ? `<div class="de-row"><span>Did instead</span>${w.done.map(esc).join(', ')}</div>` : ''}
@@ -1293,8 +1294,11 @@ function openSlipSheet(t, slip, focus) {
 function openWaveEntrySheet(t, w) {
   openSheet(`
     <h3>${w.outcome === 'rode' ? '🌊 Wave ridden' : 'Wave'}</h3>
-    <p class="sub">${fmtDateTime(w.at)} · ${w.minutes} min${w.before ? ` · urge ${w.before} → ${w.after || '?'}` : ''}</p>
+    <p class="sub">${fmtDateTime(w.at)} · ${w.minutes} min${w.overtimeMin ? ` (+${fmtShort(w.overtimeMin * MIN)} absorbed after)` : ''}${w.before ? ` · urge ${w.before} → ${w.after || '?'}` : ''}</p>
     ${w.done?.length ? `<p class="sub">Did: ${w.done.map(esc).join(', ')}</p>` : ''}
+    ${w.ratings?.length >= 2 ? waveCurveSVG(w.ratings) : ''}
+    ${w.note ? `<div class="expect"><span>💬 Your note</span>${esc(w.note)}</div>` : ''}
+    <div style="height:12px"></div>
     <button class="btn danger block" id="delWave">Delete entry</button>`, sheet => {
     $('#delWave', sheet).onclick = () => { t.waves = t.waves.filter(x => x !== w); save(); closeSheet(); render(); };
   });
@@ -1585,28 +1589,33 @@ function renderWave() {
         endWave();
       });
     };
-    $('#wEarly', el).onclick = () => { w.phase = 'done'; w.endedAt = Date.now(); save(); keepAwake(false); renderWave(); };
+    $('#wEarly', el).onclick = () => { w.phase = 'done'; w.endedAt = Date.now(); w.early = true; save(); keepAwake(false); renderWave(); };
   } else {
     const mins = Math.max(1, Math.round(((w.endedAt || w.endAt) - w.startAt) / MIN));
     el.innerHTML = `${head}<div class="wave-body">
       <div class="done-hero"><div class="e">🌊</div><h3>You stayed with it for ${mins} minute${mins === 1 ? '' : 's'}.</h3>
+      <div class="overtime" id="wOver" hidden></div>
       <p class="sub">That takes real strength. How strong is the urge now?</p></div>
       <div class="card">${w.before ? `<div class="section-title">Before: ${w.before}/10 · Now:</div>` : ''}${ratingHTML('after', w.after)}</div>
       <div class="card" id="wCurveCard" ${(w.ratings || []).length >= 2 ? '' : 'hidden'}><div class="section-title">Your wave</div><div id="wCurve">${waveCurveSVG(w.ratings)}</div>
         <div class="muted small">It rose, peaked, and came down — while you stayed with it.</div></div>
+      <div class="card"><div class="section-title">💬 Anything to note?</div>
+        <textarea id="wNote" class="wave-note" maxlength="2000" rows="3" placeholder="What you did, how you feel now, what helped — anything.">${esc(w.note || '')}</textarea></div>
       <div class="stack">
         <button class="btn block big-btn" id="wWin">I rode it out 🌊</button>
         <button class="btn block secondary" id="wMore">Still strong — 5 more minutes</button>
         <button class="btn block danger" id="wSlip">I slipped</button>
       </div>
     </div>`;
+    $('#wNote', el).oninput = e => { w.note = e.target.value; save(); };
     const log = outcome => {
-      const ratings = [...(w.ratings || [])];
-      if (w.after) ratings.push({ m: (Date.now() - w.startAt) / MIN, v: w.after });
-      t.waves.push({ id: uid(), at: Date.now(), minutes: mins, before: w.before, after: w.after, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], halt: w.halt || [], ratings, outcome });
+      const end = w.endedAt || w.endAt, ratings = [...(w.ratings || [])];
+      if (w.after) ratings.push({ m: (end - w.startAt) / MIN, v: w.after });
+      t.waves.push({ id: uid(), at: end, minutes: mins, overtimeMin: Math.round(waveOvertime(w) / MIN), note: (w.note || '').trim(),
+        before: w.before, after: w.after, done: w.done, plan: w.plan || [], expect: w.expect || '', emotions: w.emotions || [], halt: w.halt || [], ratings, outcome });
     };
     $('#wWin', el).onclick = () => { log('rode'); endWave(); render(); toast('Wave ridden. That counts. 💪'); };
-    $('#wMore', el).onclick = () => { w.phase = 'run'; w.endAt = Date.now() + 5 * MIN; delete w.endedAt; save(); keepAwake(true); renderWave(); };
+    $('#wMore', el).onclick = () => { w.phase = 'run'; w.endAt = Date.now() + 5 * MIN; delete w.endedAt; delete w.early; save(); keepAwake(true); renderWave(); };
     $('#wSlip', el).onclick = () => { const extra = { expect: w.expect || '', feltBefore: w.emotions || [], halt: w.halt || [] }; chooseSlip(t, extra, () => { log('slipped'); endWave(); }); };
   }
 
@@ -1626,7 +1635,7 @@ function renderWave() {
     w[r.dataset.rating] = +b.dataset.v; save();
     $$('button', r).forEach(x => x.classList.toggle('on', x === b));
     if (r.dataset.rating === 'after' && $('#wCurve', el)) {
-      const pts = [...(w.ratings || []), { m: ((w.endedAt || Date.now()) - w.startAt) / MIN, v: w.after }];
+      const pts = [...(w.ratings || []), { m: ((w.endedAt || w.endAt) - w.startAt) / MIN, v: w.after }];
       $('#wCurve', el).innerHTML = waveCurveSVG(pts); $('#wCurveCard', el).hidden = pts.length < 2;
     }
   });
@@ -1637,8 +1646,22 @@ function renderWave() {
   tickWave(Date.now());
 }
 
+// Time since the timer ran out (not counted if you finished early).
+const waveOvertime = (w, now = Date.now()) => (w.phase === 'done' && !w.early ? Math.max(0, now - w.endAt) : 0);
+function overtimeText(ms) {
+  if (ms < 30 * SEC) return '';
+  if (ms >= H) return `⏱ You got absorbed and forgot about it for <b>${fmtShort(ms)}</b> — that's what an urge passing looks like.`;
+  return `⏱ <b>+${Math.floor(ms / MIN)}:${pad(Math.floor(ms % MIN / SEC))}</b> since the timer ended${ms >= 5 * MIN ? ' — you got caught up in something else. That counts.' : ''}`;
+}
+
 function tickWave(now) {
   const w = state.wave;
+  if (w?.phase === 'done') {
+    const o = $('#wOver'); if (!o) return;
+    const txt = overtimeText(waveOvertime(w, now));
+    o.hidden = !txt; if (txt && o.innerHTML !== txt) o.innerHTML = txt;
+    return;
+  }
   if (!w || w.phase !== 'run') return;
   const el = $('#wave'); if (!el) return;
   const total = w.endAt - w.startAt, left = Math.max(0, w.endAt - now);
